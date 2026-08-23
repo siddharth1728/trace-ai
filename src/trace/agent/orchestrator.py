@@ -222,11 +222,12 @@ class InvestigationOrchestrator:
                 args["file_path"] = state.file_path
 
     def _formulate_final_diagnosis(self, state: AgentState) -> FinalDiagnosis:
-        """Call LLM provider to formulate student-centered final diagnosis."""
-        obs_lines = [
-            f"- [{obs.id}] ({obs.tool_name}): {obs.summary}"
-            for obs in state.observations
-        ]
+        """Call LLM provider and programmatically ground the final diagnosis against actual observations."""
+        # 1. Format observations summary with explicit success/failure status tags
+        obs_lines = []
+        for obs in state.observations:
+            status_tag = "SUCCESS" if obs.is_success else "FAILED"
+            obs_lines.append(f"- [{obs.id}] [{status_tag}] ({obs.tool_name}): {obs.summary}")
         obs_summary = "\n".join(obs_lines) if obs_lines else "No observations recorded."
 
         hyp_lines = [
@@ -255,14 +256,73 @@ class InvestigationOrchestrator:
             system_prompt=SYSTEM_INVESTIGATION_PROMPT,
         )
 
+        # 2. Programmatically construct what_trace_checked strictly from successful tool calls
+        successful_tools = [t.tool_name for t in state.tool_history if t.success]
+        tool_display_map = {
+            "ast_analyzer": "Python AST Static Analysis (parsed syntax tree, functions, variable assignments, calls)",
+            "python_executor": "Controlled Subprocess Sandbox Execution (captured exit code, stdout, stderr)",
+            "traceback_parser": "Traceback Stack Frame Analysis (normalized error type and frame lines)",
+            "file_reader": "Source Code File Inspector (read lines and structure)",
+        }
+        what_checked: List[str] = []
+        seen_tools = set()
+        for tool_name in successful_tools:
+            if tool_name not in seen_tools:
+                seen_tools.add(tool_name)
+                what_checked.append(tool_display_map.get(tool_name, f"Tool execution: {tool_name}"))
+
+        if not what_checked:
+            what_checked = ["No tools executed successfully during the session."]
+
+        # 3. Ground evidence_summary strictly in verified successful observations
+        successful_obs = state.get_successful_observations()
+        evidence_summary: List[str] = []
+        if successful_obs:
+            for obs in successful_obs:
+                evidence_summary.append(f"[{obs.tool_name}] {obs.summary}")
+        else:
+            evidence_summary = ["No successful tool observations were collected during this investigation."]
+
+        # 4. Calibrate confidence and uncertainties deterministically
+        uncertainties = list(diag_schema.what_remains_uncertain)
+        has_execution = any(t.tool_name == "python_executor" and t.success for t in state.tool_history)
+        has_syntax_confirmed = any(
+            h.status == HypothesisStatus.CONFIRMED and "syntax" in h.statement.lower()
+            for h in state.hypotheses
+        )
+        has_supported_hyp = any(
+            h.status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED)
+            for h in state.hypotheses
+        )
+
+        calibrated_confidence = float(diag_schema.confidence)
+
+        if len(successful_obs) == 0:
+            calibrated_confidence = min(calibrated_confidence, 0.25)
+            uncertainty_msg = "Investigation lacked successful tool observations (dynamic execution and/or static analysis did not succeed)."
+            if uncertainty_msg not in uncertainties:
+                uncertainties.append(uncertainty_msg)
+        elif not has_execution and not has_syntax_confirmed:
+            calibrated_confidence = min(calibrated_confidence, 0.60)
+            uncertainty_msg = "Dynamic runtime execution was not performed to verify runtime behavior."
+            if uncertainty_msg not in uncertainties:
+                uncertainties.append(uncertainty_msg)
+        elif has_syntax_confirmed or (has_supported_hyp and has_execution):
+            # Conclusively verified via AST syntax parser or sandbox execution reproduction
+            calibrated_confidence = max(0.85, min(1.0, calibrated_confidence))
+        elif has_supported_hyp and len(successful_obs) >= 2:
+            calibrated_confidence = max(0.75, min(1.0, calibrated_confidence))
+        else:
+            calibrated_confidence = min(calibrated_confidence, 0.70)
+
         return FinalDiagnosis(
             problem_statement=diag_schema.problem_statement,
             investigation_summary=diag_schema.investigation_summary,
             likely_root_cause=diag_schema.likely_root_cause,
-            evidence_summary=diag_schema.evidence_summary,
-            confidence=diag_schema.confidence,
-            what_trace_checked=diag_schema.what_trace_checked,
-            what_remains_uncertain=diag_schema.what_remains_uncertain,
+            evidence_summary=evidence_summary,
+            confidence=round(calibrated_confidence, 2),
+            what_trace_checked=what_checked,
+            what_remains_uncertain=uncertainties,
             learning_point=diag_schema.learning_point,
             suggested_fix_guidance=diag_schema.suggested_fix_guidance,
         )

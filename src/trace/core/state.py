@@ -171,6 +171,17 @@ class AgentState(BaseModel):
                 return hyp
         return None
 
+    def get_observation(self, observation_id: str) -> Optional[Observation]:
+        """Lookup an observation by its ID."""
+        for obs in self.observations:
+            if obs.id == observation_id:
+                return obs
+        return None
+
+    def get_successful_observations(self) -> List[Observation]:
+        """Return all observations that executed successfully."""
+        return [obs for obs in self.observations if obs.is_success]
+
     def update_hypothesis_status(
         self,
         hypothesis_id: str,
@@ -180,17 +191,44 @@ class AgentState(BaseModel):
         contradictory_obs_id: Optional[str] = None,
         rationale: str = "",
     ) -> None:
-        """Update confidence, evidence links, and status of an existing hypothesis."""
+        """
+        Update confidence, evidence links, and status of an existing hypothesis.
+        Enforces strict domain-layer evidence grounding rules:
+        - SUPPORTED / CONFIRMED requires a verified, successful supporting observation.
+        - Unsupported hypotheses are capped at <= 0.40 confidence and remain PROPOSED/WEAKENED.
+        """
         hyp = self.get_hypothesis(hypothesis_id)
         if not hyp:
             return
-            
+
+        # Check supporting observation validity
+        valid_supporting_obs = False
+        if supporting_obs_id:
+            obs = self.get_observation(supporting_obs_id)
+            if obs and obs.is_success:
+                valid_supporting_obs = True
+                if supporting_obs_id not in hyp.supporting_observation_ids:
+                    hyp.supporting_observation_ids.append(supporting_obs_id)
+
+        # Check contradictory observation validity
+        if contradictory_obs_id:
+            c_obs = self.get_observation(contradictory_obs_id)
+            if c_obs and c_obs.is_success:
+                if contradictory_obs_id not in hyp.contradictory_observation_ids:
+                    hyp.contradictory_observation_ids.append(contradictory_obs_id)
+
+        # Evidence Grounding Gate
+        if new_status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED):
+            if not valid_supporting_obs and not hyp.supporting_observation_ids:
+                # Disallow ungrounded high confidence/supported status
+                hyp.status = HypothesisStatus.PROPOSED
+                hyp.confidence = min(max(0.0, confidence), 0.40)
+                hyp.rationale = rationale or "Awaiting successful supporting tool observation."
+                return
+
+        # If valid or other status (REJECTED/WEAKENED/PROPOSED)
         hyp.status = new_status
         hyp.confidence = max(0.0, min(1.0, confidence))
-        if supporting_obs_id and supporting_obs_id not in hyp.supporting_observation_ids:
-            hyp.supporting_observation_ids.append(supporting_obs_id)
-        if contradictory_obs_id and contradictory_obs_id not in hyp.contradictory_observation_ids:
-            hyp.contradictory_observation_ids.append(contradictory_obs_id)
         if rationale:
             hyp.rationale = rationale
 

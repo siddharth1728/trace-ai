@@ -54,12 +54,21 @@ Agent state is strictly controlled through `AgentState` with a validated `Lifecy
 * `BLOCKED` serves as a safe terminal state if a safety violation or unrecoverable error occurs.
 * The LLM cannot mutate state directly. Only orchestrator logic processes tool results and updates state.
 
-### B. Tool System (`src/trace/tools/`)
+### B. Tool System & Pre-condition Gates (`src/trace/tools/`)
 Tools are deterministic components registered in `ToolRegistry`:
 * **`FileReaderTool`**: Reads Python source with line slicing, rejecting files $>256\text{ KB}$ and path traversals.
 * **`ASTAnalyzerTool`**: Uses Python's standard `ast` library to identify syntax errors (with exact line/offset coordinates), functions, classes, imports, assignments, and recursive structures without executing code.
-* **`TracebackParserTool`**: Normalizes exception strings into structured frames, root cause line, and exception type.
+* **`TracebackParserTool`**: Normalizes exception strings into structured frames, root cause line, and exception type. Gated by the planner to only execute when valid, non-empty traceback text exists.
 * **`PythonExecutorTool`**: Subprocess executor inside temporary directories with timeout enforcement, output caps, and environment variable sanitization.
+
+### C. Evidence Grounding & Confidence Policy (`src/trace/core/state.py`, `src/trace/agent/orchestrator.py`)
+To prevent hallucinations and unjustified confidence:
+* **Strict Support Gate:** A hypothesis cannot transition to `SUPPORTED` or `CONFIRMED` without a verified `supporting_obs_id` pointing to an observation where `is_success == True`.
+* **Deterministic Confidence Calibration:**
+  - 0 successful observations: confidence capped at $\le 0.25$.
+  - Single/unverified execution: confidence capped at $\le 0.60$.
+  - Conclusively verified (AST syntax or reproducible sandbox execution): confidence $\ge 0.85$.
+* **Programmatic Diagnosis Grounding:** `what_trace_checked` and `evidence_summary` are programmatically built strictly from successful tool history, preventing the LLM from claiming tools ran when they did not.
 
 ### C. LLM Abstraction Layer (`src/trace/llm/`)
 * **Vendor-Neutral Interface**: `LLMProvider` protocol enables switching between mock testing and real API backends (OpenAI, Anthropic, Gemini, local models via LiteLLM/Ollama).

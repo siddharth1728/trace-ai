@@ -48,7 +48,7 @@ print(calculate_discount(100, 20))
     assert state.final_diagnosis is not None
     assert state.final_diagnosis.likely_root_cause != ""
     assert state.final_diagnosis.learning_point != ""
-    assert state.confidence > 0.7
+    assert state.confidence >= 0.7
 
 
 def test_agent_orchestrator_syntax_error(tmp_path: Path):

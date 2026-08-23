@@ -21,7 +21,7 @@ T = TypeVar("T", bound=BaseModel)
 class MockLLMProvider(LLMProvider):
     """
     Deterministic rule-based LLM provider for offline testing and evaluation.
-    Inspects prompts using semantic heuristics to generate valid structured responses.
+    Grounds all decisions, hypothesis evaluations, and actions strictly in verified observations.
     """
 
     def generate_text(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -44,14 +44,16 @@ class MockLLMProvider(LLMProvider):
         return response_model.model_validate({})
 
     def _plan_investigation(self, prompt: str) -> InitialPlanSchema:
-        """Formulate initial plan and candidate hypotheses based on prompt cues."""
-        has_traceback = "TRACEBACK" in prompt and len(prompt.split("TRACEBACK (if available):")[1].split("SOURCE CODE:")[0].strip()) > 5
-        has_syntax = "syntax" in prompt.lower() or "invalid syntax" in prompt.lower()
-        has_type = "type" in prompt.lower() or "nonetype" in prompt.lower()
-        has_zero_div = "zerodivision" in prompt.lower() or "division by zero" in prompt.lower() or "empty" in prompt.lower()
-        has_index = "index" in prompt.lower() or "out of range" in prompt.lower() or "bound" in prompt.lower()
+        """Formulate initial plan and candidate hypotheses based on strictly validated inputs."""
+        # Check if non-empty traceback exists in prompt
+        has_traceback = False
+        if "TRACEBACK (if available):" in prompt:
+            tb_section = prompt.split("TRACEBACK (if available):")[1].split("SOURCE CODE:")[0].strip()
+            if tb_section and tb_section not in ("None provided", "None", "null", ""):
+                has_traceback = True
 
-        # Step 1: Initial tool selection
+        has_syntax = "syntax" in prompt.lower() or "invalid syntax" in prompt.lower()
+
         steps: List[PlanStepSchema] = []
         hypotheses: List[str] = []
 
@@ -100,10 +102,10 @@ class MockLLMProvider(LLMProvider):
                 ),
                 PlanStepSchema(
                     step_id=2,
-                    title="Execute code to observe Python parser error message",
+                    title="Execute code in controlled sandbox to observe parser error",
                     tool_name="python_executor",
                     tool_args={"source_code": ""},
-                    expected_outcome="Confirm Python runtime parser error message.",
+                    expected_outcome="Observe Python runtime parser error message.",
                 ),
             ]
         else:
@@ -136,21 +138,61 @@ class MockLLMProvider(LLMProvider):
         )
 
     def _decide_next_action(self, prompt: str) -> NextActionDecision:
-        """Decide the next action based on current observations and hypotheses in the prompt."""
-        # Extract observations and hypotheses mentions from prompt
-        evaluations: List[HypothesisEvaluationItem] = []
+        """
+        Decide next action by parsing ONLY the 'OBSERVATIONS RECORDED SO FAR' section
+        and considering only observations with Success: True.
+        """
+        # 1. Isolate the observations section strictly
+        obs_section = ""
+        if "OBSERVATIONS RECORDED SO FAR:" in prompt:
+            parts = prompt.split("OBSERVATIONS RECORDED SO FAR:")[1]
+            if "CURRENT PLAN REMAINING STEPS:" in parts:
+                obs_section = parts.split("CURRENT PLAN REMAINING STEPS:")[0]
+            else:
+                obs_section = parts
 
-        has_syntax_obs = "syntaxerror" in prompt.lower()
-        has_runtime_obs = "zerodivisionerror" in prompt.lower() or "typeerror" in prompt.lower() or "indexerror" in prompt.lower() or "runtime_error" in prompt.lower()
-        has_exec_obs = "execution" in prompt.lower() or "exit code" in prompt.lower()
-        has_ast_obs = "ast analysis" in prompt.lower()
+        # 2. Parse individual successful observation lines
+        obs_lines = obs_section.strip().splitlines()
+        successful_observations: List[Dict[str, str]] = []
+        
+        for line in obs_lines:
+            obs_match = re.search(r"-\s+\[(obs_[a-zA-Z0-9]+)\]\s+Tool:\s+([a-zA-Z0-9_]+),\s+Success:\s+(True|False)\s+\|\s+Summary:\s+(.*)", line)
+            if obs_match:
+                obs_id = obs_match.group(1)
+                tool_name = obs_match.group(2)
+                is_success = (obs_match.group(3) == "True")
+                summary = obs_match.group(4)
+                if is_success:
+                    successful_observations.append({
+                        "id": obs_id,
+                        "tool": tool_name,
+                        "summary": summary,
+                    })
 
-        # Extract hypothesis IDs from prompt
+        # 3. Extract hypothesis IDs from prompt
         hyp_ids = re.findall(r"\[(hyp_[a-zA-Z0-9_]+)\]", prompt)
         if not hyp_ids:
             hyp_ids = re.findall(r"hyp_[a-zA-Z0-9_]+", prompt)
 
-        if has_syntax_obs:
+        evaluations: List[HypothesisEvaluationItem] = []
+
+        # If NO successful observations exist yet, do not finalize and do not support hypotheses
+        if not successful_observations:
+            return NextActionDecision(
+                reasoning="No successful observations collected yet; executing next tool step.",
+                action_type=ActionType.EXECUTE_TOOL,
+                tool_name="ast_analyzer",
+                tool_args={"source_code": ""},
+                hypothesis_evaluations=[],
+            )
+
+        # Check what facts are confirmed in successful observations
+        syntax_obs = next((o for o in successful_observations if "syntaxerror" in o["summary"].lower()), None)
+        runtime_err_obs = next((o for o in successful_observations if ("error" in o["summary"].lower() or "failed" in o["summary"].lower() or "exception" in o["summary"].lower())), None)
+        exec_obs = next((o for o in successful_observations if o["tool"] == "python_executor"), None)
+        ast_obs = next((o for o in successful_observations if o["tool"] == "ast_analyzer"), None)
+
+        if syntax_obs:
             for i, hid in enumerate(hyp_ids):
                 if i == 0:
                     evaluations.append(
@@ -158,7 +200,8 @@ class MockLLMProvider(LLMProvider):
                             hypothesis_id=hid,
                             new_status=HypothesisStatus.CONFIRMED,
                             confidence=0.95,
-                            rationale="AST parser and execution confirmed deterministic SyntaxError location.",
+                            supporting_obs_id=syntax_obs["id"],
+                            rationale=f"AST parser confirmed exact SyntaxError ({syntax_obs['summary']}).",
                         )
                     )
                 else:
@@ -167,16 +210,17 @@ class MockLLMProvider(LLMProvider):
                             hypothesis_id=hid,
                             new_status=HypothesisStatus.REJECTED,
                             confidence=0.05,
-                            rationale="Issue is purely syntactic, ruling out runtime type/logic hypotheses.",
+                            contradictory_obs_id=syntax_obs["id"],
+                            rationale="Issue is purely syntactic, ruling out runtime logic/type hypotheses.",
                         )
                     )
             return NextActionDecision(
-                reasoning="Sufficient deterministic evidence from AST analyzer confirms exact syntax error.",
+                reasoning="Deterministic AST observation confirmed SyntaxError; finalizing diagnosis.",
                 action_type=ActionType.FINALIZE_DIAGNOSIS,
                 hypothesis_evaluations=evaluations,
             )
 
-        if has_runtime_obs and has_exec_obs:
+        if exec_obs and runtime_err_obs:
             for i, hid in enumerate(hyp_ids):
                 if i == 0 or i == 1:
                     evaluations.append(
@@ -184,7 +228,8 @@ class MockLLMProvider(LLMProvider):
                             hypothesis_id=hid,
                             new_status=HypothesisStatus.SUPPORTED,
                             confidence=0.90,
-                            rationale="Controlled execution and traceback confirmed exception type and failing frame.",
+                            supporting_obs_id=runtime_err_obs["id"],
+                            rationale=f"Controlled execution reproduced failure ({runtime_err_obs['summary']}).",
                         )
                     )
                 else:
@@ -193,121 +238,120 @@ class MockLLMProvider(LLMProvider):
                             hypothesis_id=hid,
                             new_status=HypothesisStatus.WEAKENED,
                             confidence=0.20,
-                            rationale="Evidence points specifically to runtime exception rather than generic logic issue.",
+                            rationale="Evidence points specifically to runtime exception.",
                         )
                     )
             return NextActionDecision(
-                reasoning="Collected strong evidence from traceback and execution reproducing the runtime failure.",
+                reasoning="Controlled execution produced concrete runtime error observation; finalizing diagnosis.",
                 action_type=ActionType.FINALIZE_DIAGNOSIS,
                 hypothesis_evaluations=evaluations,
             )
 
-        # If we have only 1 observation and remaining steps, proceed to next tool
+        # If execution has not run yet and it's not a confirmed syntax error, run execution to verify runtime behavior
+        if not exec_obs and not syntax_obs:
+            return NextActionDecision(
+                reasoning="Static/traceback step completed; running code in sandbox to observe runtime behavior.",
+                action_type=ActionType.EXECUTE_TOOL,
+                tool_name="python_executor",
+                tool_args={"source_code": ""},
+                hypothesis_evaluations=evaluations,
+            )
+
         return NextActionDecision(
-            reasoning="Need additional dynamic evidence from execution to confirm hypothesis.",
-            action_type=ActionType.EXECUTE_TOOL,
-            tool_name="python_executor",
-            tool_args={"source_code": ""},
+            reasoning="Investigation steps completed; finalizing diagnosis.",
+            action_type=ActionType.FINALIZE_DIAGNOSIS,
             hypothesis_evaluations=evaluations,
         )
 
     def _formulate_diagnosis(self, prompt: str) -> DiagnosisSchema:
-        """Formulate a student-oriented diagnosis backed by evidence."""
+        """Formulate student diagnosis grounded strictly in observation data."""
+        # Isolate observations section in diagnosis prompt
+        obs_text = ""
+        if "ALL OBSERVATIONS COLLECTED:" in prompt:
+            obs_text = prompt.split("ALL OBSERVATIONS COLLECTED:")[1].split("EVALUATED HYPOTHESES:")[0]
+
+        obs_lower = obs_text.lower()
         prompt_lower = prompt.lower()
 
-        if "syntaxerror" in prompt_lower or "syntax" in prompt_lower:
+        if "syntaxerror" in obs_lower or "syntax" in obs_lower:
             return DiagnosisSchema(
                 problem_statement="The Python interpreter encountered a SyntaxError and could not parse the file.",
-                investigation_summary="TRACE performed AST static analysis and verified parser output in the sandbox.",
+                investigation_summary="TRACE performed AST static analysis and identified the syntax error location.",
                 likely_root_cause="A syntax error (e.g. missing colon, unbalanced parenthesis, or invalid keyword) prevents Python from parsing the code.",
                 evidence_summary=[
-                    "AST analyzer reported SyntaxError with line and column coordinates.",
-                    "Subprocess execution exited with non-zero exit code during parsing phase.",
+                    "AST analyzer reported SyntaxError coordinates.",
                 ],
                 confidence=0.95,
                 what_trace_checked=[
-                    "Python AST parsing",
-                    "Syntax token positioning",
-                    "Subprocess execution validation",
+                    "Python AST Static Analysis",
                 ],
                 what_remains_uncertain=["None. The syntax error was deterministically verified."],
-                learning_point="In Python, Python code must be syntactically valid before any lines can run. Common syntax errors include missing colons ':' after 'def', 'if', 'for', 'while', or mismatched parentheses/brackets.",
+                learning_point="In Python, code must be syntactically valid before any lines can run. Common syntax errors include missing colons ':' after 'def', 'if', 'for', 'while', or mismatched parentheses/brackets.",
                 suggested_fix_guidance="Check the indicated line and the line directly above it for missing colons, unclosed brackets, or invalid syntax.",
             )
 
-        if "zerodivisionerror" in prompt_lower or "division by zero" in prompt_lower or "average" in prompt_lower:
+        if "zerodivisionerror" in obs_lower or "division by zero" in obs_lower or "zerodivision" in prompt_lower:
             return DiagnosisSchema(
                 problem_statement="The program crashes with a ZeroDivisionError when performing arithmetic division.",
-                investigation_summary="TRACE parsed the traceback, verified the AST division operator, and reproduced the ZeroDivisionError in a sandbox.",
+                investigation_summary="TRACE analyzed the source structure and reproduced the ZeroDivisionError in a controlled execution sandbox.",
                 likely_root_cause="The denominator in a division operation evaluates to zero (e.g., len(items) on an empty collection or an unhandled 0 value).",
                 evidence_summary=[
                     "Execution raised ZeroDivisionError: division by zero.",
-                    "AST analysis identified division node in the target function without a zero-check guard.",
                 ],
-                confidence=0.92,
+                confidence=0.90,
                 what_trace_checked=[
-                    "Division operator operands in AST",
-                    "Runtime execution on empty / zero inputs",
-                    "Traceback frame stack",
+                    "Controlled Subprocess Sandbox Execution",
                 ],
-                what_remains_uncertain=["Whether caller expected empty lists to return 0, None, or raise a custom exception."],
+                what_remains_uncertain=["Whether caller expected empty inputs to return 0, None, or raise a custom exception."],
                 learning_point="In Python, dividing any number by 0 raises a ZeroDivisionError. When computing averages or ratios, always verify that the divisor (such as len(numbers)) is greater than 0 before dividing.",
                 suggested_fix_guidance="Add an input guard or conditional check (e.g., `if not numbers: return 0`) before performing the division.",
             )
 
-        if "typeerror" in prompt_lower or "nonetype" in prompt_lower or "none" in prompt_lower:
+        if "typeerror" in obs_lower or "attributeerror" in obs_lower or "nonetype" in obs_lower or "nonetype" in prompt_lower or "none" in prompt_lower:
             return DiagnosisSchema(
-                problem_statement="The program crashes with a TypeError due to an operation on an unexpected type (e.g., NoneType).",
-                investigation_summary="TRACE traced variable assignments, inspected AST calls, and reproduced the TypeError in controlled execution.",
-                likely_root_cause="A variable expected to be a collection or object evaluates to None (or an incompatible type) at runtime when a method or operator is invoked.",
+                problem_statement="The program crashes with a TypeError/AttributeError due to an operation on an unexpected None value.",
+                investigation_summary="TRACE analyzed code structure and reproduced the exception in a controlled execution sandbox.",
+                likely_root_cause="A variable expected to be a collection or string evaluates to None at runtime when a method or operator is invoked.",
                 evidence_summary=[
-                    "Subprocess execution produced a TypeError.",
-                    "Traceback identified the exact line where the incompatible operation occurred.",
+                    "Subprocess execution produced TypeError / AttributeError on NoneType value.",
                 ],
                 confidence=0.90,
                 what_trace_checked=[
-                    "Traceback error line and exception type",
-                    "Variable assignment flow in AST",
-                    "Subprocess execution output",
+                    "Controlled Subprocess Sandbox Execution",
                 ],
                 what_remains_uncertain=["Whether the upstream function returning None was intentional or itself buggy."],
-                learning_point="Functions in Python return None by default if no return statement is executed. Attempting to access attributes, index, or iterate over None raises a TypeError.",
+                learning_point="Functions or dict lookups in Python return None if a key is missing or no return statement executes. Calling methods (like .upper()) on None raises an exception.",
                 suggested_fix_guidance="Check where the variable receives its value, and ensure default values or None-checks (e.g., `if value is None:`) are in place.",
             )
 
-        if "indexerror" in prompt_lower or "out of range" in prompt_lower:
+        if "indexerror" in obs_lower or "out of range" in obs_lower or "index" in prompt_lower:
             return DiagnosisSchema(
                 problem_statement="The program crashes with an IndexError: list index out of range.",
-                investigation_summary="TRACE analyzed list indexing operations and reproduced the out-of-bounds access in controlled execution.",
-                likely_root_cause="An index accessed in a list, tuple, or string is equal to or greater than its length, or the collection is empty.",
+                investigation_summary="TRACE analyzed code indexing and reproduced the out-of-bounds access in controlled execution.",
+                likely_root_cause="An index accessed in a list, tuple, or string is equal to or greater than its length.",
                 evidence_summary=[
                     "Execution produced IndexError: list index out of range.",
-                    "Traceback pointed to indexing operation.",
                 ],
                 confidence=0.90,
                 what_trace_checked=[
-                    "List indexing operations in AST",
-                    "Traceback frame",
-                    "Execution with various collection lengths",
+                    "Controlled Subprocess Sandbox Execution",
                 ],
                 what_remains_uncertain=["Intended collection size assumptions in the student's specification."],
                 learning_point="Python lists are 0-indexed, meaning valid indices range from 0 to len(list) - 1. Accessing index len(list) will always raise an IndexError.",
                 suggested_fix_guidance="Check boundary conditions in loops or check `if len(items) > index:` before direct indexing.",
             )
 
-        # General / Logic Error fallback diagnosis
+        # General fallback
         return DiagnosisSchema(
-            problem_statement="An issue was identified during code investigation.",
-            investigation_summary="TRACE examined code structure with AST analyzer and executed the script in a controlled sandbox.",
+            problem_statement="An issue was investigated in the target Python script.",
+            investigation_summary="TRACE examined code structure and executed the script in a controlled sandbox.",
             likely_root_cause="The code logic or control flow does not satisfy the required input/output conditions.",
             evidence_summary=[
-                "Static AST analysis checked branches and variable assignments.",
-                "Subprocess execution completed with observation logs.",
+                "Execution observation captured runtime behavior.",
             ],
-            confidence=0.85,
+            confidence=0.80,
             what_trace_checked=[
-                "Function definitions and control flow",
-                "Subprocess execution output",
+                "Controlled Subprocess Sandbox Execution",
             ],
             what_remains_uncertain=["Exact expected domain specifications for all edge case inputs."],
             learning_point="Debugging requires matching expected state transitions at each step of execution against observed program state.",

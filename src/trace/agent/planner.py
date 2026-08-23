@@ -56,18 +56,51 @@ class InvestigationPlanner:
                 )
             )
 
-        # Convert to domain PlanStep models
-        steps = [
-            PlanStep(
-                step_id=s.step_id,
-                title=s.title,
-                tool_name=s.tool_name,
-                tool_args=s.tool_args,
-                expected_outcome=s.expected_outcome,
-                status=StepStatus.PENDING,
+        # Determine if valid traceback input exists
+        has_valid_traceback = bool(
+            state.traceback_input
+            and state.traceback_input.strip()
+            and state.traceback_input.strip() not in ("None provided", "None", "null")
+        )
+
+        # Convert to domain PlanStep models, gating tools by pre-conditions
+        steps: List[PlanStep] = []
+        for s in plan_schema.steps:
+            # Pre-condition gate: Do not schedule traceback_parser if no traceback exists
+            if s.tool_name == "traceback_parser" and not has_valid_traceback:
+                continue
+
+            steps.append(
+                PlanStep(
+                    step_id=len(steps) + 1,
+                    title=s.title,
+                    tool_name=s.tool_name,
+                    tool_args=s.tool_args,
+                    expected_outcome=s.expected_outcome,
+                    status=StepStatus.PENDING,
+                )
             )
-            for s in plan_schema.steps
-        ]
+
+        # If all steps were filtered out (or none created), ensure fallback investigation steps
+        if not steps:
+            steps = [
+                PlanStep(
+                    step_id=1,
+                    title="Perform static AST analysis on code structure",
+                    tool_name="ast_analyzer",
+                    tool_args={"source_code": state.source_code},
+                    expected_outcome="Analyze variables, functions, syntax, and control flow.",
+                    status=StepStatus.PENDING,
+                ),
+                PlanStep(
+                    step_id=2,
+                    title="Execute code in controlled sandbox to observe runtime behavior",
+                    tool_name="python_executor",
+                    tool_args={"source_code": state.source_code},
+                    expected_outcome="Observe runtime execution, exit code, and stdout/stderr.",
+                    status=StepStatus.PENDING,
+                ),
+            ]
 
         plan = InvestigationPlan(
             objective=plan_schema.objective,

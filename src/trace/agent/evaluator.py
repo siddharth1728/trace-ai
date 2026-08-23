@@ -83,23 +83,35 @@ class InvestigationEvaluator:
         decision: Optional[NextActionDecision] = None,
     ) -> Tuple[bool, str]:
         """Determine if the investigation should stop and transition to diagnosis."""
-        # 1. Explicit LLM decision to finalize
-        if decision and decision.action_type == ActionType.FINALIZE_DIAGNOSIS:
-            return True, "Sufficient evidence collected to finalize diagnosis."
+        successful_obs_count = len(state.get_successful_observations())
+        pending_steps = (
+            [s for s in state.current_plan.steps if s.status == StepStatus.PENDING]
+            if state.current_plan
+            else []
+        )
 
-        # 2. Max iterations reached
+        # 1. Max iterations reached (always terminates to prevent infinite loops)
         if state.iteration_count >= state.max_iterations:
             return True, f"Reached maximum allowed iterations ({state.max_iterations})."
 
-        # 3. A hypothesis is confirmed with high confidence (>= 0.90)
+        # 2. Explicit LLM decision to finalize
+        if decision and decision.action_type == ActionType.FINALIZE_DIAGNOSIS:
+            # Prevent premature finalization if 0 successful observations exist and pending steps remain
+            if successful_obs_count == 0 and len(pending_steps) > 0:
+                return False, "Premature finalization rejected: No successful observations collected yet and pending steps remain."
+            return True, "Sufficient evidence collected to finalize diagnosis."
+
+        # 3. A hypothesis is confirmed with high confidence (>= 0.90) and backed by successful observations
         for hyp in state.hypotheses:
-            if hyp.status == HypothesisStatus.CONFIRMED and hyp.confidence >= 0.90:
-                return True, f"Hypothesis [{hyp.id}] confirmed with {hyp.confidence * 100:.0f}% confidence."
+            if (
+                hyp.status == HypothesisStatus.CONFIRMED
+                and hyp.confidence >= 0.90
+                and len(hyp.supporting_observation_ids) > 0
+            ):
+                return True, f"Hypothesis [{hyp.id}] confirmed with {hyp.confidence * 100:.0f}% confidence backed by observation evidence."
 
         # 4. No more pending plan steps
-        if state.current_plan:
-            pending_steps = [s for s in state.current_plan.steps if s.status == StepStatus.PENDING]
-            if not pending_steps and (decision is None or decision.action_type != ActionType.EXECUTE_TOOL):
-                return True, "All planned investigation steps completed."
+        if not pending_steps and (decision is None or decision.action_type != ActionType.EXECUTE_TOOL):
+            return True, "All planned investigation steps completed."
 
         return False, ""
