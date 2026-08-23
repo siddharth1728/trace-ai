@@ -7,6 +7,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from trace.core.evidence import Evidence, EvidenceRelation, EvidenceType
 from trace.core.models import (
     FinalDiagnosis,
     Hypothesis,
@@ -105,6 +106,7 @@ class AgentState(BaseModel):
     completed_steps: List[PlanStep] = Field(default_factory=list)
     
     observations: List[Observation] = Field(default_factory=list)
+    evidence_store: List[Evidence] = Field(default_factory=list)
     hypotheses: List[Hypothesis] = Field(default_factory=list)
     tool_history: List[ToolCallRecord] = Field(default_factory=list)
     
@@ -144,7 +146,7 @@ class AgentState(BaseModel):
         observation_id: Optional[str] = None,
         error: Optional[str] = None,
     ) -> ToolCallRecord:
-        """Log a tool execution in the session's audit history."""
+        """Audit log an executed tool call."""
         record = ToolCallRecord(
             tool_name=tool_name,
             arguments=arguments,
@@ -159,6 +161,36 @@ class AgentState(BaseModel):
     def add_observation(self, observation: Observation) -> None:
         """Add an observation produced by a tool."""
         self.observations.append(observation)
+
+    def add_evidence(self, evidence: Evidence) -> None:
+        """Add an atomic evidence record and link to target hypothesis."""
+        self.evidence_store.append(evidence)
+        hyp = self.get_hypothesis(evidence.target_hypothesis_id)
+        if hyp:
+            if evidence.is_supporting():
+                if evidence.id not in hyp.supporting_evidence_ids:
+                    hyp.supporting_evidence_ids.append(evidence.id)
+            elif evidence.is_contradicting():
+                if evidence.id not in hyp.contradictory_evidence_ids:
+                    hyp.contradictory_evidence_ids.append(evidence.id)
+
+    def get_evidence_for_hypothesis(self, hypothesis_id: str) -> List[Evidence]:
+        """Get all evidence linked to a specific hypothesis."""
+        return [e for e in self.evidence_store if e.target_hypothesis_id == hypothesis_id]
+
+    def get_direct_supporting_evidence(self, hypothesis_id: str) -> List[Evidence]:
+        """Get all direct supporting evidence items for a hypothesis."""
+        return [
+            e for e in self.evidence_store
+            if e.target_hypothesis_id == hypothesis_id and e.is_supporting() and e.is_direct()
+        ]
+
+    def get_contradicting_evidence(self, hypothesis_id: str) -> List[Evidence]:
+        """Get all contradicting or disproving evidence items for a hypothesis."""
+        return [
+            e for e in self.evidence_store
+            if e.target_hypothesis_id == hypothesis_id and e.is_contradicting()
+        ]
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         """Add a newly proposed hypothesis."""
@@ -194,7 +226,7 @@ class AgentState(BaseModel):
         """
         Update confidence, evidence links, and status of an existing hypothesis.
         Enforces strict domain-layer evidence grounding rules:
-        - SUPPORTED / CONFIRMED requires a verified, successful supporting observation.
+        - SUPPORTED / CONFIRMED / VERIFIED requires a verified, successful supporting observation.
         - Unsupported hypotheses are capped at <= 0.40 confidence and remain PROPOSED/WEAKENED.
         """
         hyp = self.get_hypothesis(hypothesis_id)
@@ -218,15 +250,15 @@ class AgentState(BaseModel):
                     hyp.contradictory_observation_ids.append(contradictory_obs_id)
 
         # Evidence Grounding Gate
-        if new_status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED):
-            if not valid_supporting_obs and not hyp.supporting_observation_ids:
+        if new_status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED, HypothesisStatus.VERIFIED):
+            if not valid_supporting_obs and not hyp.supporting_observation_ids and not hyp.supporting_evidence_ids:
                 # Disallow ungrounded high confidence/supported status
                 hyp.status = HypothesisStatus.PROPOSED
                 hyp.confidence = min(max(0.0, confidence), 0.40)
                 hyp.rationale = rationale or "Awaiting successful supporting tool observation."
                 return
 
-        # If valid or other status (REJECTED/WEAKENED/PROPOSED)
+        # If valid or other status (REJECTED/WEAKENED/PROPOSED/VERIFICATION_PENDING/DISPROVEN)
         hyp.status = new_status
         hyp.confidence = max(0.0, min(1.0, confidence))
         if rationale:

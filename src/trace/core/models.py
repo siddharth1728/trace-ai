@@ -14,7 +14,10 @@ class HypothesisStatus(str, Enum):
     SUPPORTED = "SUPPORTED"
     WEAKENED = "WEAKENED"
     REJECTED = "REJECTED"
-    CONFIRMED = "CONFIRMED"
+    VERIFICATION_PENDING = "VERIFICATION_PENDING"
+    VERIFIED = "VERIFIED"
+    DISPROVEN = "DISPROVEN"
+    CONFIRMED = "CONFIRMED"  # Retained for v0.1.1 backwards compatibility
 
 
 class StepStatus(str, Enum):
@@ -47,6 +50,10 @@ class Hypothesis(BaseModel):
     status: HypothesisStatus = HypothesisStatus.PROPOSED
     supporting_observation_ids: List[str] = Field(default_factory=list)
     contradictory_observation_ids: List[str] = Field(default_factory=list)
+    supporting_evidence_ids: List[str] = Field(default_factory=list)
+    contradictory_evidence_ids: List[str] = Field(default_factory=list)
+    counterexample_ids: List[str] = Field(default_factory=list)
+    falsification_condition: str = ""
     rationale: str = ""
 
 
@@ -80,3 +87,5 @@ class FinalDiagnosis(BaseModel):
     what_remains_uncertain: List[str] = Field(default_factory=list)
     learning_point: str
     suggested_fix_guidance: str
+    verified_hypothesis_id: Optional[str] = None
+    countercheck_summary: Optional[str] = None

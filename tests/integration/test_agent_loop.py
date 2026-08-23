@@ -71,6 +71,6 @@ def process_data(items)
     assert state.final_diagnosis is not None
     assert "syntax" in state.final_diagnosis.likely_root_cause.lower()
     
-    # Check that at least one hypothesis was confirmed
-    confirmed = [h for h in state.hypotheses if h.status == HypothesisStatus.CONFIRMED]
+    # Check that at least one hypothesis was confirmed/verified
+    confirmed = [h for h in state.hypotheses if h.status in (HypothesisStatus.CONFIRMED, HypothesisStatus.VERIFIED)]
     assert len(confirmed) >= 1

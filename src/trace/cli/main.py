@@ -18,7 +18,6 @@ from trace.core.models import HypothesisStatus
 from trace.core.state import AgentState, LifecycleState
 from trace.llm.provider import LLMProviderFactory
 
-# Set UTF-8 stream handling where supported
 console = Console(force_terminal=True, highlight=False)
 
 app = typer.Typer(
@@ -30,9 +29,13 @@ app = typer.Typer(
 
 
 def format_status_badge(status: HypothesisStatus) -> Text:
-    """Format colorful badge for hypothesis status."""
-    if status == HypothesisStatus.CONFIRMED:
-        return Text(" CONFIRMED ", style="bold black on bright_green")
+    """Format colorful badge for hypothesis status with cross-platform ASCII-safe text."""
+    if status in (HypothesisStatus.VERIFIED, HypothesisStatus.CONFIRMED):
+        return Text(" [VERIFIED] ", style="bold black on bright_green")
+    elif status == HypothesisStatus.DISPROVEN:
+        return Text(" [DISPROVEN] ", style="bold white on bright_red")
+    elif status == HypothesisStatus.VERIFICATION_PENDING:
+        return Text(" [TESTING] ", style="bold black on bright_magenta")
     elif status == HypothesisStatus.SUPPORTED:
         return Text(" SUPPORTED ", style="bold black on bright_cyan")
     elif status == HypothesisStatus.REJECTED:
@@ -103,7 +106,7 @@ def investigate_cmd(
     # Banner
     console.print(
         Panel.fit(
-            "[bold white]TRACE[/bold white] [dim]v0.1.0[/dim]\n"
+            "[bold white]TRACE[/bold white] [dim]v0.2.0 (Evidence Engine & Verification)[/dim]\n"
             "[cyan]Understand your bugs. Understand how you debug.[/cyan]",
             border_style="bright_blue",
             box=box.ROUNDED,
@@ -171,7 +174,7 @@ def investigate_cmd(
         hyp_table = Table(title="[bold]Hypothesis Evaluation Board[/bold]", box=box.ROUNDED)
         hyp_table.add_column("ID", style="dim", width=10)
         hyp_table.add_column("Statement", style="white")
-        hyp_table.add_column("Status", justify="center", width=14)
+        hyp_table.add_column("Status", justify="center", width=16)
         hyp_table.add_column("Confidence", justify="right", width=12)
 
         for h in state.hypotheses:
@@ -182,7 +185,30 @@ def investigate_cmd(
         console.print(hyp_table)
         console.print()
 
-    # 2. Final Evidence-Grounded Diagnosis
+    # 2. Auditable Evidence Chain
+    if state.evidence_store:
+        evi_table = Table(title="[bold]Auditable Evidence Chain[/bold]", box=box.ROUNDED)
+        evi_table.add_column("ID", style="dim", width=12)
+        evi_table.add_column("Origin", width=10)
+        evi_table.add_column("Tool", style="cyan", width=22)
+        evi_table.add_column("Relation", justify="center", width=14)
+        evi_table.add_column("Observed Evidence Statement", style="white")
+
+        for e in state.evidence_store:
+            origin_badge = "[bold green]Direct[/]" if e.is_direct() else "[bold magenta]Derived[/]"
+            rel_style = "green" if e.is_supporting() else "red"
+            evi_table.add_row(
+                e.id,
+                origin_badge,
+                e.tool_name,
+                f"[{rel_style}]{e.relation.value}[/]",
+                e.statement,
+            )
+
+        console.print(evi_table)
+        console.print()
+
+    # 3. Final Evidence-Grounded Diagnosis
     if state.final_diagnosis:
         diag = state.final_diagnosis
 
@@ -198,13 +224,17 @@ def investigate_cmd(
             diag_content.append(f"  * {ev}\n")
         diag_content.append("\n")
 
+        if diag.countercheck_summary:
+            diag_content.append("[COUNTERCHECK VERIFICATION]\n", style="bold magenta")
+            diag_content.append(f"  {diag.countercheck_summary}\n\n")
+
         diag_content.append("[STUDENT LEARNING POINT]\n", style="bold yellow")
         diag_content.append(f"  {diag.learning_point}\n\n")
 
         diag_content.append("[HOW TO FIX IT - CONCEPTUAL GUIDANCE]\n", style="bold bright_blue")
         diag_content.append(f"  {diag.suggested_fix_guidance}\n\n")
 
-        diag_content.append(f"Confidence: {diag.confidence * 100:.0f}%\n", style="dim")
+        diag_content.append(f"Calibrated Confidence: {diag.confidence * 100:.0f}%\n", style="dim")
         if diag.what_remains_uncertain:
             diag_content.append("Remaining Uncertainties:\n", style="dim italic")
             for unc in diag.what_remains_uncertain:
@@ -213,7 +243,7 @@ def investigate_cmd(
         console.print(
             Panel(
                 diag_content,
-                title="[bold green]TRACE Final Diagnosis & Learning Takeaway[/bold green]",
+                title="[bold green]TRACE Final Diagnosis & Verification Report[/bold green]",
                 border_style="green",
                 box=box.ROUNDED,
             )
@@ -223,7 +253,7 @@ def investigate_cmd(
 @app.command(name="version")
 def version_cmd() -> None:
     """Print TRACE version."""
-    console.print("[bold]TRACE[/bold] version 0.1.0 (v0.1 Investigation Core)")
+    console.print("[bold]TRACE[/bold] version 0.2.0 (v0.2 Evidence Engine & Automated Verification)")
 
 
 if __name__ == "__main__":

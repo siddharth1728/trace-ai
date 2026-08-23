@@ -290,11 +290,11 @@ class MockLLMProvider(LLMProvider):
                 suggested_fix_guidance="Check the indicated line and the line directly above it for missing colons, unclosed brackets, or invalid syntax.",
             )
 
-        if "zerodivisionerror" in obs_lower or "division by zero" in obs_lower or "zerodivision" in prompt_lower:
+        if "zerodivisionerror" in obs_lower or "division by zero" in obs_lower:
             return DiagnosisSchema(
                 problem_statement="The program crashes with a ZeroDivisionError when performing arithmetic division.",
                 investigation_summary="TRACE analyzed the source structure and reproduced the ZeroDivisionError in a controlled execution sandbox.",
-                likely_root_cause="The denominator in a division operation evaluates to zero (e.g., len(items) on an empty collection or an unhandled 0 value).",
+                likely_root_cause="The denominator in a division operation evaluates to zero (e.g., len(items) on an empty collection or an unhandled 0 value in a formula).",
                 evidence_summary=[
                     "Execution raised ZeroDivisionError: division by zero.",
                 ],
@@ -307,24 +307,7 @@ class MockLLMProvider(LLMProvider):
                 suggested_fix_guidance="Add an input guard or conditional check (e.g., `if not numbers: return 0`) before performing the division.",
             )
 
-        if "typeerror" in obs_lower or "attributeerror" in obs_lower or "nonetype" in obs_lower or "nonetype" in prompt_lower or "none" in prompt_lower:
-            return DiagnosisSchema(
-                problem_statement="The program crashes with a TypeError/AttributeError due to an operation on an unexpected None value.",
-                investigation_summary="TRACE analyzed code structure and reproduced the exception in a controlled execution sandbox.",
-                likely_root_cause="A variable expected to be a collection or string evaluates to None at runtime when a method or operator is invoked.",
-                evidence_summary=[
-                    "Subprocess execution produced TypeError / AttributeError on NoneType value.",
-                ],
-                confidence=0.90,
-                what_trace_checked=[
-                    "Controlled Subprocess Sandbox Execution",
-                ],
-                what_remains_uncertain=["Whether the upstream function returning None was intentional or itself buggy."],
-                learning_point="Functions or dict lookups in Python return None if a key is missing or no return statement executes. Calling methods (like .upper()) on None raises an exception.",
-                suggested_fix_guidance="Check where the variable receives its value, and ensure default values or None-checks (e.g., `if value is None:`) are in place.",
-            )
-
-        if "indexerror" in obs_lower or "out of range" in obs_lower or "index" in prompt_lower:
+        if "indexerror" in obs_lower or "out of range" in obs_lower:
             return DiagnosisSchema(
                 problem_statement="The program crashes with an IndexError: list index out of range.",
                 investigation_summary="TRACE analyzed code indexing and reproduced the out-of-bounds access in controlled execution.",
@@ -339,6 +322,40 @@ class MockLLMProvider(LLMProvider):
                 what_remains_uncertain=["Intended collection size assumptions in the student's specification."],
                 learning_point="Python lists are 0-indexed, meaning valid indices range from 0 to len(list) - 1. Accessing index len(list) will always raise an IndexError.",
                 suggested_fix_guidance="Check boundary conditions in loops or check `if len(items) > index:` before direct indexing.",
+            )
+
+        if "unboundlocalerror" in obs_lower or "nameerror" in obs_lower:
+            return DiagnosisSchema(
+                problem_statement="The program crashes with an UnboundLocalError / NameError due to variable scoping.",
+                investigation_summary="TRACE analyzed variable scoping and reproduced the unassigned variable reference in sandbox execution.",
+                likely_root_cause="A variable is referenced before assignment or inside an unexecuted conditional branch without global/default initialization.",
+                evidence_summary=[
+                    "Execution produced UnboundLocalError / NameError on variable reference.",
+                ],
+                confidence=0.90,
+                what_trace_checked=[
+                    "Controlled Subprocess Sandbox Execution",
+                ],
+                what_remains_uncertain=["Intended default fallback value when conditional branches are not taken."],
+                learning_point="In Python, variables declared inside conditional branches do not exist if the branch is not taken. Always assign default values before if-statements or declare 'global' when modifying outer variables.",
+                suggested_fix_guidance="Initialize the variable before the if/elif branches or declare 'global' if modifying module-level variables.",
+            )
+
+        if "typeerror" in obs_lower or "attributeerror" in obs_lower or "nonetype" in obs_lower:
+            return DiagnosisSchema(
+                problem_statement="The program crashes with a TypeError/AttributeError due to an operation on an unexpected None value or incompatible data type.",
+                investigation_summary="TRACE analyzed code structure and reproduced the exception in a controlled execution sandbox.",
+                likely_root_cause="A variable expected to be a collection or string evaluates to None at runtime, or incompatible types are combined.",
+                evidence_summary=[
+                    "Subprocess execution produced TypeError / AttributeError on value.",
+                ],
+                confidence=0.90,
+                what_trace_checked=[
+                    "Controlled Subprocess Sandbox Execution",
+                ],
+                what_remains_uncertain=["Whether the upstream function returning None was intentional or itself buggy."],
+                learning_point="Functions or dict lookups in Python return None if a key is missing or no return statement executes. Calling methods (like .upper()) on None raises an exception.",
+                suggested_fix_guidance="Check where the variable receives its value, and ensure default values or None-checks (e.g., `if value is None:`) are in place.",
             )
 
         # General fallback

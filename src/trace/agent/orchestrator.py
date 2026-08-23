@@ -1,13 +1,18 @@
-"""Core Investigation Orchestrator driving the TRACE agent loop."""
+"""Core Investigation Orchestrator driving the TRACE v0.2 agent loop."""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from trace.agent.counterexample import CounterexampleEngine
 from trace.agent.evaluator import InvestigationEvaluator
 from trace.agent.planner import InvestigationPlanner
+from trace.agent.verifier import VerificationEngine, VerificationStatus
+from trace.core.claim_validator import DiagnosisClaimValidator
 from trace.core.events import EventType, TraceEvent, global_event_bus
+from trace.core.evidence import Evidence, EvidenceRelation, EvidenceType
 from trace.core.models import (
     FinalDiagnosis,
+    Hypothesis,
     HypothesisStatus,
     Observation,
     PlanStep,
@@ -16,14 +21,15 @@ from trace.core.models import (
 from trace.core.state import AgentState, LifecycleState
 from trace.llm.prompts import DIAGNOSIS_PROMPT_TEMPLATE, SYSTEM_INVESTIGATION_PROMPT
 from trace.llm.provider import LLMProvider, LLMProviderFactory
-from trace.llm.schemas import ActionType, DiagnosisSchema, NextActionDecision
+from trace.llm.schemas import ActionType, DiagnosisSchema
 from trace.tools.registry import ToolRegistry, create_default_registry
 
 
 class InvestigationOrchestrator:
     """
-    Main agent orchestrator executing the TRACE debugging investigation loop.
-    Coordinates State, Planner, Evaluator, Tool Registry, and LLM Provider.
+    Main agent orchestrator executing the TRACE v0.2 debugging investigation loop.
+    Coordinates State, Planner, Evaluator, Verification Engine, Counterexample Engine,
+    Claim Validator, and Tool Registry.
     """
 
     def __init__(
@@ -36,6 +42,9 @@ class InvestigationOrchestrator:
         self.registry = registry or create_default_registry(workspace_root=str(workspace_root) if workspace_root else None)
         self.planner = InvestigationPlanner(self.provider)
         self.evaluator = InvestigationEvaluator(self.provider)
+        self.verifier = VerificationEngine()
+        self.counterexample_engine = CounterexampleEngine()
+        self.claim_validator = DiagnosisClaimValidator()
 
     def _get_tools_summary(self) -> str:
         """Format a summary of registered tools for LLM prompts."""
@@ -108,7 +117,6 @@ class InvestigationOrchestrator:
                             break
 
                 if not current_step and not can_continue:
-                    # Stopping condition met
                     break
 
                 # Determine tool to execute
@@ -144,6 +152,9 @@ class InvestigationOrchestrator:
                     current_step.observation_id = obs.id
                     state.completed_steps.append(current_step)
 
+                # Extract Direct Evidence from Observation
+                self._extract_evidence_from_observation(obs, state)
+
                 # 5. EVALUATING
                 state.transition_to(LifecycleState.EVALUATING)
                 decision = self.evaluator.evaluate_step(state)
@@ -165,7 +176,10 @@ class InvestigationOrchestrator:
                 else:
                     state.transition_to(LifecycleState.INVESTIGATING)
 
-            # 6. DIAGNOSING
+            # 6. COUNTEREXAMPLE & VERIFICATION STAGE (v0.2)
+            self._run_counterexample_and_verification_stage(state)
+
+            # 7. DIAGNOSING & CLAIM VALIDATION
             state.transition_to(LifecycleState.DIAGNOSING)
             final_diagnosis = self._formulate_final_diagnosis(state)
             state.final_diagnosis = final_diagnosis
@@ -180,7 +194,7 @@ class InvestigationOrchestrator:
                 )
             )
 
-            # 7. EXPLAINING & COMPLETED
+            # 8. EXPLAINING & COMPLETED
             state.transition_to(LifecycleState.EXPLAINING)
             state.transition_to(LifecycleState.COMPLETED)
 
@@ -206,6 +220,101 @@ class InvestigationOrchestrator:
 
         return state
 
+    def _extract_evidence_from_observation(self, obs: Observation, state: AgentState) -> None:
+        """Extract atomic direct evidence items from a successful observation."""
+        if not obs.is_success:
+            return
+
+        # Find target hypothesis (primary candidate matching observation characteristics)
+        target_hyp = self._find_matching_hypothesis(obs, state)
+        target_hyp_id = target_hyp.id if target_hyp else (state.hypotheses[0].id if state.hypotheses else "hyp_general")
+
+        if target_hyp and obs.is_success:
+            if obs.id not in target_hyp.supporting_observation_ids:
+                target_hyp.supporting_observation_ids.append(obs.id)
+
+        evidence_item = Evidence(
+            observation_id=obs.id,
+            tool_name=obs.tool_name,
+            evidence_type=EvidenceType.DIRECT,
+            statement=obs.summary,
+            raw_fact=obs.output_data,
+            target_hypothesis_id=target_hyp_id,
+            relation=EvidenceRelation.SUPPORTS,
+            confidence_weight=1.0,
+        )
+        state.add_evidence(evidence_item)
+
+    def _find_matching_hypothesis(self, obs: Observation, state: AgentState) -> Optional[Hypothesis]:
+        """Match an observation to the most relevant candidate hypothesis."""
+        obs_text = obs.summary.lower()
+        for hyp in state.hypotheses:
+            hyp_text = hyp.statement.lower()
+            if "syntax" in obs_text and "syntax" in hyp_text:
+                return hyp
+            if ("zerodivision" in obs_text or "division by zero" in obs_text) and ("zerodivision" in hyp_text or "empty" in hyp_text or "calculation" in hyp_text):
+                return hyp
+            if ("typeerror" in obs_text or "nonetype" in obs_text or "attributeerror" in obs_text) and ("none" in hyp_text or "type" in hyp_text):
+                return hyp
+            if "indexerror" in obs_text and ("index" in hyp_text or "bound" in hyp_text):
+                return hyp
+        return state.hypotheses[0] if state.hypotheses else None
+
+    def _run_counterexample_and_verification_stage(self, state: AgentState) -> None:
+        """
+        Execute targeted countercheck experiments and run deterministic verification
+        on candidate hypotheses before finalizing the diagnosis.
+        """
+        if not state.hypotheses:
+            return
+
+        # Find leading hypothesis
+        leading_hyp = next(
+            (h for h in state.hypotheses if h.status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED, HypothesisStatus.PROPOSED)),
+            state.hypotheses[0]
+        )
+
+        # Check if leading hypothesis is already confirmed syntax error
+        has_syntax_ast = any(
+            e.tool_name == "ast_analyzer" and "syntax" in e.statement.lower()
+            for e in state.get_direct_supporting_evidence(leading_hyp.id)
+        )
+
+        if not has_syntax_ast and leading_hyp:
+            # Transition to VERIFICATION_PENDING
+            leading_hyp.status = HypothesisStatus.VERIFICATION_PENDING
+            
+            # Generate and run targeted counterexample experiment
+            experiment = self.counterexample_engine.generate_experiment(leading_hyp, state)
+            if experiment:
+                self.counterexample_engine.run_experiment(experiment, state)
+
+        # Run Deterministic Verifier across all hypotheses
+        verifications = self.verifier.verify_all_hypotheses(state)
+        for ver in verifications:
+            hyp = state.get_hypothesis(ver.hypothesis_id)
+            if hyp:
+                if ver.status == VerificationStatus.VERIFIED:
+                    hyp.status = HypothesisStatus.VERIFIED
+                    hyp.confidence = ver.calibrated_confidence
+                    hyp.rationale = ver.rationale
+                elif ver.status == VerificationStatus.DISPROVEN:
+                    hyp.status = HypothesisStatus.DISPROVEN
+                    hyp.confidence = ver.calibrated_confidence
+                    hyp.rationale = ver.rationale
+                elif ver.status == VerificationStatus.STRONGLY_SUPPORTED:
+                    hyp.status = HypothesisStatus.SUPPORTED
+                    hyp.confidence = ver.calibrated_confidence
+                    hyp.rationale = ver.rationale
+                elif ver.status == VerificationStatus.PLAUSIBLE:
+                    hyp.status = HypothesisStatus.SUPPORTED
+                    hyp.confidence = ver.calibrated_confidence
+                    hyp.rationale = ver.rationale
+                else:
+                    hyp.status = HypothesisStatus.PROPOSED
+                    hyp.confidence = ver.calibrated_confidence
+                    hyp.rationale = ver.rationale
+
     def _populate_tool_args(self, tool_name: str, args: Dict[str, Any], state: AgentState) -> None:
         """Inject appropriate state context into tool argument templates."""
         if tool_name in ("ast_analyzer", "python_executor"):
@@ -222,8 +331,7 @@ class InvestigationOrchestrator:
                 args["file_path"] = state.file_path
 
     def _formulate_final_diagnosis(self, state: AgentState) -> FinalDiagnosis:
-        """Call LLM provider and programmatically ground the final diagnosis against actual observations."""
-        # 1. Format observations summary with explicit success/failure status tags
+        """Call LLM provider and programmatically validate and ground all final claims."""
         obs_lines = []
         for obs in state.observations:
             status_tag = "SUCCESS" if obs.is_success else "FAILED"
@@ -256,73 +364,43 @@ class InvestigationOrchestrator:
             system_prompt=SYSTEM_INVESTIGATION_PROMPT,
         )
 
-        # 2. Programmatically construct what_trace_checked strictly from successful tool calls
-        successful_tools = [t.tool_name for t in state.tool_history if t.success]
-        tool_display_map = {
-            "ast_analyzer": "Python AST Static Analysis (parsed syntax tree, functions, variable assignments, calls)",
-            "python_executor": "Controlled Subprocess Sandbox Execution (captured exit code, stdout, stderr)",
-            "traceback_parser": "Traceback Stack Frame Analysis (normalized error type and frame lines)",
-            "file_reader": "Source Code File Inspector (read lines and structure)",
-        }
-        what_checked: List[str] = []
-        seen_tools = set()
-        for tool_name in successful_tools:
-            if tool_name not in seen_tools:
-                seen_tools.add(tool_name)
-                what_checked.append(tool_display_map.get(tool_name, f"Tool execution: {tool_name}"))
+        # Identify top verified/supported hypothesis
+        top_hyp = next(
+            (h for h in state.hypotheses if h.status in (HypothesisStatus.VERIFIED, HypothesisStatus.CONFIRMED)),
+            next((h for h in state.hypotheses if h.status == HypothesisStatus.SUPPORTED), None)
+        )
 
-        if not what_checked:
-            what_checked = ["No tools executed successfully during the session."]
-
-        # 3. Ground evidence_summary strictly in verified successful observations
         successful_obs = state.get_successful_observations()
-        evidence_summary: List[str] = []
-        if successful_obs:
-            for obs in successful_obs:
-                evidence_summary.append(f"[{obs.tool_name}] {obs.summary}")
-        else:
-            evidence_summary = ["No successful tool observations were collected during this investigation."]
-
-        # 4. Calibrate confidence and uncertainties deterministically
         uncertainties = list(diag_schema.what_remains_uncertain)
-        has_execution = any(t.tool_name == "python_executor" and t.success for t in state.tool_history)
-        has_syntax_confirmed = any(
-            h.status == HypothesisStatus.CONFIRMED and "syntax" in h.statement.lower()
-            for h in state.hypotheses
-        )
-        has_supported_hyp = any(
-            h.status in (HypothesisStatus.SUPPORTED, HypothesisStatus.CONFIRMED)
-            for h in state.hypotheses
-        )
-
-        calibrated_confidence = float(diag_schema.confidence)
 
         if len(successful_obs) == 0:
-            calibrated_confidence = min(calibrated_confidence, 0.25)
-            uncertainty_msg = "Investigation lacked successful tool observations (dynamic execution and/or static analysis did not succeed)."
-            if uncertainty_msg not in uncertainties:
-                uncertainties.append(uncertainty_msg)
-        elif not has_execution and not has_syntax_confirmed:
-            calibrated_confidence = min(calibrated_confidence, 0.60)
-            uncertainty_msg = "Dynamic runtime execution was not performed to verify runtime behavior."
-            if uncertainty_msg not in uncertainties:
-                uncertainties.append(uncertainty_msg)
-        elif has_syntax_confirmed or (has_supported_hyp and has_execution):
-            # Conclusively verified via AST syntax parser or sandbox execution reproduction
-            calibrated_confidence = max(0.85, min(1.0, calibrated_confidence))
-        elif has_supported_hyp and len(successful_obs) >= 2:
-            calibrated_confidence = max(0.75, min(1.0, calibrated_confidence))
+            calibrated_conf = 0.20
+            unc_msg = "Investigation lacked successful tool observations (dynamic execution and/or static analysis did not succeed)."
+            if unc_msg not in uncertainties:
+                uncertainties.append(unc_msg)
+        elif top_hyp:
+            calibrated_conf = top_hyp.confidence
         else:
-            calibrated_confidence = min(calibrated_confidence, 0.70)
+            calibrated_conf = 0.25
 
-        return FinalDiagnosis(
+        # Countercheck summary
+        counter_ev = next((e for e in state.evidence_store if e.tool_name == "counterexample_engine"), None)
+        countercheck_summary = counter_ev.statement if counter_ev else None
+
+        raw_diagnosis = FinalDiagnosis(
             problem_statement=diag_schema.problem_statement,
             investigation_summary=diag_schema.investigation_summary,
             likely_root_cause=diag_schema.likely_root_cause,
-            evidence_summary=evidence_summary,
-            confidence=round(calibrated_confidence, 2),
-            what_trace_checked=what_checked,
+            evidence_summary=diag_schema.evidence_summary,
+            confidence=round(calibrated_conf, 2),
+            what_trace_checked=[],
             what_remains_uncertain=uncertainties,
             learning_point=diag_schema.learning_point,
             suggested_fix_guidance=diag_schema.suggested_fix_guidance,
+            verified_hypothesis_id=top_hyp.id if top_hyp else None,
+            countercheck_summary=countercheck_summary,
         )
+
+        # Audit and ground diagnosis through Claim Validator
+        grounded_diagnosis, _ = self.claim_validator.validate_and_ground_diagnosis(raw_diagnosis, state)
+        return grounded_diagnosis
