@@ -244,6 +244,20 @@ class InvestigationOrchestrator:
             confidence_weight=1.0,
         )
         state.add_evidence(evidence_item)
+        global_event_bus.publish(
+            TraceEvent(
+                session_id=state.session_id,
+                event_type=EventType.EVIDENCE_EXTRACTED,
+                payload={
+                    "evidence_id": evidence_item.id,
+                    "evidence_type": evidence_item.evidence_type.value,
+                    "relation": evidence_item.relation.value,
+                    "statement": evidence_item.statement,
+                    "target_hypothesis_id": target_hyp_id,
+                },
+                message=f"Extracted {evidence_item.evidence_type.value} evidence: {evidence_item.statement}",
+            )
+        )
 
     def _find_matching_hypothesis(self, obs: Observation, state: AgentState) -> Optional[Hypothesis]:
         """Match an observation to the most relevant candidate hypothesis."""
@@ -287,7 +301,22 @@ class InvestigationOrchestrator:
             # Generate and run targeted counterexample experiment
             experiment = self.counterexample_engine.generate_experiment(leading_hyp, state)
             if experiment:
-                self.counterexample_engine.run_experiment(experiment, state)
+                ev = self.counterexample_engine.run_experiment(experiment, state)
+                global_event_bus.publish(
+                    TraceEvent(
+                        session_id=state.session_id,
+                        event_type=EventType.COUNTERCHECK_COMPLETED,
+                        payload={
+                            "experiment_id": experiment.id,
+                            "strategy": experiment.strategy,
+                            "passed": experiment.passed,
+                            "disproved": experiment.disproved,
+                            "description": experiment.description,
+                            "evidence_statement": ev.statement,
+                        },
+                        message=f"Countercheck experiment completed ({'PASS' if experiment.passed else 'DISPROVED'}): {experiment.description}",
+                    )
+                )
 
         # Run Deterministic Verifier across all hypotheses
         verifications = self.verifier.verify_all_hypotheses(state)

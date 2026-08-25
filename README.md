@@ -42,10 +42,29 @@ TRACE solves this by separating **deterministic facts** from **language reasonin
 
 ---
 
-## System Architecture (v0.2)
+## System Architecture (v0.4)
 
 ```text
-TRACE v0.2 — Evidence Engine & Automated Verification
+TRACE v0.4 — Learning & Debugging Behavior Intelligence
+│
+├── Frontend (React + Vite + Tailwind)
+│   ├── Investigation Studio # 3-Pane UI: Code, Pipeline, Diagnosis
+│   ├── Debugging Profile    # [v0.4] Continuous telemetry habit stats & AI behavior pattern
+│   ├── EventStream Hook     # React hook consuming Server-Sent Events (SSE)
+│   └── API Client           # Typed frontend client
+│
+├── Backend API (FastAPI)
+│   ├── Session Routes       # Create, list, retrieve debug sessions
+│   ├── Profile Routes       # [v0.4] /api/profile & /api/sessions/{id}/telemetry
+│   ├── SSE Broadcaster      # Streams live agent state to the browser
+│   └── Persistence Layer    # SQLite (SQLAlchemy) session & telemetry storage
+│
+├── ML & Behavior Intelligence Core [v0.4]
+│   ├── Telemetry Extractor  # 18-feature process vector (Student vs Agent isolated)
+│   ├── Habit Profiler       # 100% deterministic mathematical habit analytics
+│   ├── Rule Baseline        # Documented deterministic decision heuristic
+│   ├── Behavior Classifier  # Regularized Random Forest classifier in scikit-learn
+│   └── Explainer Engine     # Decision-path feature attribution & pedagogical takeaways
 │
 ├── Agent Core
 │   ├── Orchestrator       # Manages investigation lifecycle (Created -> Completed)
@@ -139,8 +158,9 @@ python -m pytest -v tests/
 * [x] **v0.1**: Core Investigation Loop, 4 Deterministic Tools, Rich CLI, Safety Sandbox
 * [x] **v0.1.1**: Reliability & Truthfulness Patch, Tool Pre-Condition Gates
 * [x] **v0.2**: Evidence Engine, Automated Counterexample Disproof, Claim Validation, 16-Case Benchmark
-* [ ] **v0.3**: Persistence (PostgreSQL/SQLite), Multi-File Tracing, Student Session History
-* [ ] **v0.4**: Socratic Conversational Debugging Mode & VS Code Extension
+* [x] **v0.3**: Product Layer & Persistence (React/FastAPI/SQLite), 3-Pane UI, Live SSE Streaming
+* [x] **v0.4**: Learning & Debugging Behavior Intelligence (18-Feature Telemetry, Baselines, Random Forest, Student Profile)
+* [ ] **v0.5**: Socratic Conversational Debugging Mode & VS Code Extension
 * [ ] **v1.0**: Interactive Student Web Platform & Production Sandboxing
 
 ---
