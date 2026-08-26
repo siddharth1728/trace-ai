@@ -7,12 +7,21 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trace.api.schemas import (
+    AnswerSocraticRequest,
+    CodeRevisionDTO,
+    CreateCodeRevisionRequest,
     CreateSessionRequest,
+    CreateStudentHypothesisRequest,
+    CreateStudentTestInputRequest,
     ErrorResponse,
+    InteractiveTimelineResponse,
     InvestigateRequest,
     InvestigationStartedResponse,
+    RevisionsListResponse,
     SessionDetailResponse,
     SessionListResponse,
+    StudentHypothesisDTO,
+    StudentTestExecutionResponse,
 )
 from trace.db.session import get_db_session
 from trace.services.event_broadcaster import global_broadcaster
@@ -198,3 +207,105 @@ async def stream_session_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================================
+# Milestone v0.5 Interactive Student Debugging Turn Routes
+# ============================================================================
+
+@router.post(
+    "/{session_id}/turns/hypothesis",
+    response_model=StudentHypothesisDTO,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a student-articulated hypothesis",
+)
+async def submit_hypothesis(
+    session_id: str,
+    request: CreateStudentHypothesisRequest,
+    service: SessionService = Depends(get_session_service),
+) -> StudentHypothesisDTO:
+    """Record a hypothesis formulated by the student."""
+    try:
+        return await service.submit_student_hypothesis(session_id, request)
+    except KeyError as k_err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(k_err))
+
+
+@router.post(
+    "/{session_id}/turns/revision",
+    response_model=CodeRevisionDTO,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a modified code revision",
+)
+async def submit_code_revision(
+    session_id: str,
+    request: CreateCodeRevisionRequest,
+    service: SessionService = Depends(get_session_service),
+) -> CodeRevisionDTO:
+    """Process, diff, and test-execute a student code modification."""
+    try:
+        return await service.submit_code_revision(session_id, request)
+    except KeyError as k_err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(k_err))
+
+
+@router.post(
+    "/{session_id}/turns/test-input",
+    response_model=StudentTestExecutionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Propose and execute a custom student test input",
+)
+async def submit_test_input(
+    session_id: str,
+    request: CreateStudentTestInputRequest,
+    service: SessionService = Depends(get_session_service),
+) -> StudentTestExecutionResponse:
+    """Run a student-proposed test case in the isolated execution sandbox."""
+    try:
+        return await service.submit_student_test_input(session_id, request)
+    except KeyError as k_err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(k_err))
+
+
+@router.post(
+    "/{session_id}/turns/answer-socratic",
+    response_model=SessionDetailResponse,
+    summary="Answer or skip a Socratic question",
+)
+async def answer_socratic_prompt(
+    session_id: str,
+    request: AnswerSocraticRequest,
+    service: SessionService = Depends(get_session_service),
+) -> SessionDetailResponse:
+    """Record response to a reflective inquiry from TRACE."""
+    try:
+        return await service.answer_socratic_prompt(session_id, request)
+    except KeyError as k_err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(k_err))
+
+
+@router.get(
+    "/{session_id}/revisions",
+    response_model=RevisionsListResponse,
+    summary="List all code revisions for a session",
+)
+async def list_revisions(
+    session_id: str,
+    service: SessionService = Depends(get_session_service),
+) -> RevisionsListResponse:
+    """Retrieve full revision history and diff metrics."""
+    return await service.list_revisions(session_id)
+
+
+@router.get(
+    "/{session_id}/timeline",
+    response_model=InteractiveTimelineResponse,
+    summary="Get complete interaction timeline",
+)
+async def list_timeline(
+    session_id: str,
+    service: SessionService = Depends(get_session_service),
+) -> InteractiveTimelineResponse:
+    """Retrieve chronological log of student and TRACE interaction turns."""
+    return await service.list_timeline(session_id)
+

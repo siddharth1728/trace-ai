@@ -89,3 +89,117 @@ class FinalDiagnosis(BaseModel):
     suggested_fix_guidance: str
     verified_hypothesis_id: Optional[str] = None
     countercheck_summary: Optional[str] = None
+
+
+# ============================================================================
+# Milestone v0.5 Interactive Student Debugging Domain Models
+# ============================================================================
+
+class InvestigationMode(str, Enum):
+    """Investigation mode: Autonomous (Guided) vs Collaborative (Interactive)."""
+    GUIDED = "GUIDED"
+    INTERACTIVE = "INTERACTIVE"
+
+
+class StudentHypothesisStatus(str, Enum):
+    """Status of a student-articulated hypothesis."""
+    UNTESTED = "UNTESTED"
+    SUPPORTED = "SUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
+    REVISED = "REVISED"
+    ABANDONED = "ABANDONED"
+
+
+class StudentHypothesis(BaseModel):
+    """A hypothesis formulated directly by the student."""
+    id: str = Field(default_factory=lambda: f"shyp_{uuid.uuid4().hex[:8]}")
+    turn_number: int = 1
+    hypothesis_text: str
+    target_function_or_line: Optional[str] = None
+    student_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    status: StudentHypothesisStatus = StudentHypothesisStatus.UNTESTED
+    evaluation_observation_id: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class CodeRevision(BaseModel):
+    """A distinct student code modification attempt within a session."""
+    id: str = Field(default_factory=lambda: f"rev_{uuid.uuid4().hex[:8]}")
+    session_id: str
+    revision_number: int = 1
+    source_code: str
+    intent_notes: Optional[str] = None
+    time_since_previous_sec: float = 0.0
+    lines_added: int = 0
+    lines_deleted: int = 0
+    lines_modified: int = 0
+    total_loc: int = 0
+    cyclomatic_complexity_delta: int = 0
+    modified_ast_nodes: List[str] = Field(default_factory=list)
+    modified_functions: List[str] = Field(default_factory=list)
+    execution_success: bool = False
+    runtime_error_type: Optional[str] = None
+    resolved_error: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class StudentTestInput(BaseModel):
+    """A concrete function call or input vector proposed by the student."""
+    id: str = Field(default_factory=lambda: f"stest_{uuid.uuid4().hex[:8]}")
+    session_id: str
+    turn_number: int = 1
+    input_expression: str
+    student_rationale: Optional[str] = None
+    is_boundary_case: bool = False
+    executed: bool = False
+    execution_success: bool = False
+    stdout: str = ""
+    stderr: str = ""
+    exception_type: Optional[str] = None
+    execution_time_ms: float = 0.0
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class TurnSpeaker(str, Enum):
+    """Speaker role for interaction turns."""
+    STUDENT = "STUDENT"
+    TRACE = "TRACE"
+
+
+class StudentActionType(str, Enum):
+    """Canonical student interaction action types."""
+    SUBMIT_INITIAL_BUG = "SUBMIT_INITIAL_BUG"
+    PROPOSE_HYPOTHESIS = "PROPOSE_HYPOTHESIS"
+    PROPOSE_TEST_INPUT = "PROPOSE_TEST_INPUT"
+    SUBMIT_CODE_REVISION = "SUBMIT_CODE_REVISION"
+    RUN_SANDBOX_CHECK = "RUN_SANDBOX_CHECK"
+    ANSWER_SOCRATIC_PROMPT = "ANSWER_SOCRATIC_PROMPT"
+    REQUEST_TRACE_INVESTIGATE = "REQUEST_TRACE_INVESTIGATE"
+    SKIP_INTERACTION = "SKIP_INTERACTION"
+    MARK_SESSION_RESOLVED = "MARK_SESSION_RESOLVED"
+
+
+class SocraticPrompt(BaseModel):
+    """A reflective, targeted inquiry presented to the student by TRACE."""
+    id: str = Field(default_factory=lambda: f"soc_{uuid.uuid4().hex[:8]}")
+    question_text: str
+    focus_area: str  # e.g. "boundary_conditions", "exception_line", "return_value"
+    target_code_snippet: Optional[str] = None
+    suggested_options: List[str] = Field(default_factory=list)
+    turn_number: int = 1
+    answered: bool = False
+    student_response: Optional[str] = None
+    skipped: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class InteractionTurn(BaseModel):
+    """A single sequential dialogue/action exchange in an interactive session."""
+    id: str = Field(default_factory=lambda: f"turn_{uuid.uuid4().hex[:8]}")
+    turn_number: int
+    speaker: TurnSpeaker
+    action_type: str
+    content_text: str
+    referenced_entity_id: Optional[str] = None
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+

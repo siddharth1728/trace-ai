@@ -1,307 +1,284 @@
-"""Dataset Management, Quality Auditing, and Labeling Provenance for TRACE v0.4."""
+"""Dataset Builder, Exporter, and Labeling Workflow for TRACE v0.4-A.
+
+Strictly enforces:
+1. Zero raw code in dataset exports (only structured numerical/categorical features).
+2. Explicit REAL vs. SYNTHETIC data source segregation.
+3. Transparent labeling workflow (rule-assisted proposals, human review, ambiguous handling).
+4. Export to standard JSON and CSV tabular formats with version metadata.
+"""
 
 import csv
+import io
 import json
-import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field
 
+from trace.ml.baselines import RuleBasedBehaviorClassifier
 from trace.ml.schemas import (
     BehaviorArchetype,
-    LabelProvenance,
-    TelemetryFeatures,
+    BehaviorLabelRecord,
+    DataSourceType,
+    FeatureVector,
+    TelemetryRecord,
     utc_now,
 )
 
 
-class LabeledSessionRecord(BaseModel):
-    """A complete labeled sample for behavioral classification."""
-    features: TelemetryFeatures
-    provenance: LabelProvenance
-
-
-class DatasetQualityReport(BaseModel):
-    """Audit report assessing dataset balance, integrity, and leakage guards."""
-    total_samples: int
-    real_user_samples: int
-    synthetic_samples: int
-    class_distribution: Dict[str, int]
-    class_distribution_pct: Dict[str, float]
-    unique_problem_ids: int
-    problem_clusters: Dict[str, int]
-    missing_values_detected: int
-    collinear_feature_pairs: List[Tuple[str, str, float]]  # (|r| > 0.85)
-    is_balanced: bool  # min class >= 20% of max class
-    leakage_guard_passed: bool
-    audit_timestamp: str
-
-
-class DatasetAuditor:
-    """Performs rigorous data quality checks, distribution analysis, and leakage prevention audits."""
-
-    @classmethod
-    def audit(cls, records: List[LabeledSessionRecord]) -> DatasetQualityReport:
-        total = len(records)
-        if total == 0:
-            return DatasetQualityReport(
-                total_samples=0,
-                real_user_samples=0,
-                synthetic_samples=0,
-                class_distribution={},
-                class_distribution_pct={},
-                unique_problem_ids=0,
-                problem_clusters={},
-                missing_values_detected=0,
-                collinear_feature_pairs=[],
-                is_balanced=False,
-                leakage_guard_passed=True,
-                audit_timestamp=utc_now().isoformat(),
-            )
-
-        real_count = sum(1 for r in records if not r.features.is_synthetic)
-        synthetic_count = total - real_count
-
-        # Class distribution
-        class_dist: Dict[str, int] = {}
-        for r in records:
-            lbl = r.provenance.label.value if hasattr(r.provenance.label, "value") else str(r.provenance.label)
-            class_dist[lbl] = class_dist.get(lbl, 0) + 1
-
-        class_pct = {k: round((v / total) * 100, 1) for k, v in class_dist.items()}
-
-        # Problem clusters
-        problem_clusters: Dict[str, int] = {}
-        for r in records:
-            pid = r.features.problem_id or "default"
-            problem_clusters[pid] = problem_clusters.get(pid, 0) + 1
-
-        unique_problems = len(problem_clusters)
-
-        # Check balance (min class count >= 20% of max class count)
-        counts = list(class_dist.values())
-        is_balanced = (min(counts) / max(counts) >= 0.20) if counts and max(counts) > 0 else False
-
-        # Multicollinearity check across 18 features
-        feature_names = TelemetryFeatures.feature_names()
-        X_matrix = [r.features.to_feature_vector() for r in records]
-
-        collinear_pairs: List[Tuple[str, str, float]] = []
-        if total >= 5:
-            n_feats = len(feature_names)
-            for i in range(n_feats):
-                for j in range(i + 1, n_feats):
-                    col_i = [row[i] for row in X_matrix]
-                    col_j = [row[j] for row in X_matrix]
-                    corr = cls._compute_pearson_correlation(col_i, col_j)
-                    if abs(corr) >= 0.85:
-                        collinear_pairs.append((feature_names[i], feature_names[j], round(corr, 3)))
-
-        return DatasetQualityReport(
-            total_samples=total,
-            real_user_samples=real_count,
-            synthetic_samples=synthetic_count,
-            class_distribution=class_dist,
-            class_distribution_pct=class_pct,
-            unique_problem_ids=unique_problems,
-            problem_clusters=problem_clusters,
-            missing_values_detected=0,
-            collinear_feature_pairs=collinear_pairs,
-            is_balanced=is_balanced,
-            leakage_guard_passed=unique_problems >= 2,  # Must have multiple problem clusters for GroupKFold
-            audit_timestamp=utc_now().isoformat(),
-        )
-
-    @staticmethod
-    def _compute_pearson_correlation(x: List[float], y: List[float]) -> float:
-        """Compute Pearson correlation coefficient r between two numeric series."""
-        n = len(x)
-        if n == 0:
-            return 0.0
-
-        mean_x = sum(x) / n
-        mean_y = sum(y) / n
-
-        var_x = sum((xi - mean_x) ** 2 for xi in x)
-        var_y = sum((yi - mean_y) ** 2 for yi in y)
-
-        if var_x == 0.0 or var_y == 0.0:
-            return 0.0
-
-        cov_xy = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
-        return cov_xy / math.sqrt(var_x * var_y)
-
-
 class DatasetExporter:
-    """Handles JSON/CSV serialization and persistence for labeled telemetry datasets."""
+    """Exports structured telemetry features and behavioral labels into clean tabular datasets."""
 
     @classmethod
-    def export_to_json(cls, records: List[LabeledSessionRecord], file_path: Path) -> None:
-        """Export dataset to formatted JSON."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        data = [r.model_dump(mode="json") for r in records]
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+    def to_records(
+        cls,
+        features: List[FeatureVector],
+        labels: Optional[Dict[str, BehaviorLabelRecord]] = None,
+        dataset_version: str = "v0.4-A",
+    ) -> List[Dict[str, Any]]:
+        """Assemble structured dataset records with feature columns and explicit provenance."""
+        labels = labels or {}
+        rows: List[Dict[str, Any]] = []
+
+        for f in features:
+            label_rec = labels.get(f.session_id)
+            final_label = label_rec.final_label if label_rec else None
+            proposed_label = label_rec.proposed_label if label_rec else None
+            method = label_rec.labeling_method if label_rec else "UNLABELED"
+            reviewer_status = label_rec.reviewer_status if label_rec else "UNREVIEWED"
+
+            row = {
+                "session_id": f.session_id,
+                "data_source": f.data_source.value if hasattr(f.data_source, "value") else str(f.data_source),
+                "problem_id": f.problem_id,
+                # 18 Features
+                "loc": f.loc,
+                "ast_node_count": f.ast_node_count,
+                "ast_max_depth": f.ast_max_depth,
+                "cyclomatic_complexity": f.cyclomatic_complexity,
+                "function_count": f.function_count,
+                "has_traceback_input": int(f.has_traceback_input),
+                "error_desc_length": f.error_desc_length,
+                "error_family_syntax": int(f.error_family_syntax),
+                "error_family_type_or_value": int(f.error_family_type_or_value),
+                "ast_first_step": int(f.ast_first_step),
+                "static_to_exec_ratio": f.static_to_exec_ratio,
+                "failed_tool_ratio": f.failed_tool_ratio,
+                "tool_sequence_entropy": f.tool_sequence_entropy,
+                "total_investigation_steps": f.total_investigation_steps,
+                "hypothesis_count": f.hypothesis_count,
+                "hypothesis_rejection_ratio": f.hypothesis_rejection_ratio,
+                "countercheck_execution_rate": f.countercheck_execution_rate,
+                "direct_evidence_ratio": f.direct_evidence_ratio,
+                # Labeling Metadata
+                "label": final_label.value if hasattr(final_label, "value") else final_label,
+                "proposed_label": proposed_label.value if hasattr(proposed_label, "value") else proposed_label,
+                "labeling_method": method,
+                "reviewer_status": reviewer_status,
+                "dataset_version": dataset_version,
+            }
+            rows.append(row)
+
+        return rows
 
     @classmethod
-    def load_from_json(cls, file_path: Path) -> List[LabeledSessionRecord]:
-        """Load dataset from JSON."""
-        if not file_path.exists():
-            return []
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
-        return [LabeledSessionRecord.model_validate(item) for item in raw_data]
+    def export_json(
+        cls,
+        features: List[FeatureVector],
+        labels: Optional[Dict[str, BehaviorLabelRecord]] = None,
+        dataset_version: str = "v0.4-A",
+    ) -> str:
+        """Export dataset as formatted JSON string."""
+        records = cls.to_records(features, labels, dataset_version)
+        return json.dumps({
+            "version": dataset_version,
+            "record_count": len(records),
+            "created_at": utc_now().isoformat(),
+            "data": records,
+        }, indent=2)
 
     @classmethod
-    def export_to_csv(cls, records: List[LabeledSessionRecord], file_path: Path) -> None:
-        """Export tabular features and target labels to CSV."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        feature_names = TelemetryFeatures.feature_names()
-        fieldnames = ["session_id", "problem_id", "is_synthetic"] + feature_names + ["label", "labeling_method", "confidence"]
+    def export_csv(
+        cls,
+        features: List[FeatureVector],
+        labels: Optional[Dict[str, BehaviorLabelRecord]] = None,
+        dataset_version: str = "v0.4-A",
+    ) -> str:
+        """Export dataset as CSV text."""
+        records = cls.to_records(features, labels, dataset_version)
+        if not records:
+            return ""
 
-        with open(file_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for r in records:
-                row = {
-                    "session_id": r.features.session_id,
-                    "problem_id": r.features.problem_id,
-                    "is_synthetic": r.features.is_synthetic,
-                    "label": r.provenance.label.value if hasattr(r.provenance.label, "value") else str(r.provenance.label),
-                    "labeling_method": r.provenance.labeling_method,
-                    "confidence": r.provenance.confidence,
-                }
-                for name, val in zip(feature_names, r.features.to_feature_vector()):
-                    row[name] = val
-                writer.writerow(row)
+        output = io.StringIO()
+        fieldnames = list(records[0].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+        return output.getvalue()
 
 
-class SyntheticBenchmarkDatasetGenerator:
-    """Generates synthetic / benchmark test traces strictly quarantined for test suites & schema verification."""
+class LabelingWorkflow:
+    """Manages rule-assisted candidate label generation and expert reviewer confirmation."""
 
     @classmethod
-    def generate_test_dataset(cls, n_per_class: int = 20) -> List[LabeledSessionRecord]:
-        """Generate deterministic, clearly labeled synthetic records across the 3 archetypes."""
-        records: List[LabeledSessionRecord] = []
-
-        # Problem clusters for GroupKFold testing
-        problem_pool = [
-            "prob_syntax_err_missing_colon",
-            "prob_type_err_none_upper",
-            "prob_logic_err_off_by_one",
-            "prob_runtime_zerodiv",
-            "prob_boundary_empty_list",
-        ]
-
-        # 1. Systematic Verification Archetype
-        for i in range(n_per_class):
-            pid = problem_pool[i % len(problem_pool)]
-            feat = TelemetryFeatures(
-                session_id=f"synth_sys_{i:03d}",
-                is_synthetic=True,
-                problem_id=pid,
-                loc=15 + (i % 10),
-                ast_node_count=45 + (i % 20),
-                ast_max_depth=4 + (i % 3),
-                cyclomatic_complexity=2 + (i % 3),
-                function_count=1 + (i % 2),
-                has_traceback_input=True,
-                error_desc_length=40 + (i % 15),
-                error_family_syntax=(i % 3 == 0),
-                error_family_type_or_value=(i % 3 != 0),
-                ast_first_step=True,
-                static_to_exec_ratio=2.0 + ((i % 5) * 0.2),
-                failed_tool_ratio=0.05,
-                tool_sequence_entropy=0.85,
-                total_investigation_steps=4 + (i % 3),
-                hypothesis_churn_count=2,
-                hypothesis_rejection_ratio=0.5,
-                countercheck_execution_rate=0.8 + ((i % 3) * 0.1),
-                direct_evidence_ratio=0.75 + ((i % 3) * 0.05),
-            )
-            records.append(LabeledSessionRecord(
-                features=feat,
-                provenance=LabelProvenance(
-                    session_id=feat.session_id,
-                    label=BehaviorArchetype.SYSTEMATIC_VERIFICATION,
-                    labeling_method="SYNTHETIC_BENCHMARK",
-                    reviewer_id="generator",
-                    confidence=1.0,
-                ),
+    def propose_rule_labels(
+        cls,
+        features_list: List[FeatureVector],
+        dataset_version: str = "v0.4-A",
+    ) -> List[BehaviorLabelRecord]:
+        """Generate rule-assisted candidate labels using the deterministic rule baseline."""
+        labels: List[BehaviorLabelRecord] = []
+        for f in features_list:
+            archetype, conf, triggers = RuleBasedBehaviorClassifier.classify(f)
+            labels.append(BehaviorLabelRecord(
+                session_id=f.session_id,
+                proposed_label=archetype,
+                final_label=None,  # Remains unconfirmed until human review
+                labeling_method="RULE_ASSISTED",
+                reviewer_status="UNREVIEWED",
+                reviewer_notes=f"Triggers: {'; '.join(triggers)}",
+                confidence=conf,
+                dataset_version=dataset_version,
+                created_at=utc_now(),
+                updated_at=utc_now(),
             ))
+        return labels
 
-        # 2. Rapid Trial and Error (Guess-and-Check) Archetype
-        for i in range(n_per_class):
-            pid = problem_pool[i % len(problem_pool)]
-            feat = TelemetryFeatures(
-                session_id=f"synth_guess_{i:03d}",
-                is_synthetic=True,
-                problem_id=pid,
-                loc=10 + (i % 8),
-                ast_node_count=30 + (i % 15),
-                ast_max_depth=3 + (i % 2),
-                cyclomatic_complexity=1 + (i % 2),
+    @classmethod
+    def review_label(
+        cls,
+        label_record: BehaviorLabelRecord,
+        confirmed_label: Optional[BehaviorArchetype] = None,
+        reviewer_notes: Optional[str] = None,
+        is_ambiguous: bool = False,
+    ) -> BehaviorLabelRecord:
+        """Apply human expert confirmation or mark session as ambiguous."""
+        if is_ambiguous:
+            label_record.reviewer_status = "AMBIGUOUS"
+            label_record.final_label = None
+            label_record.reviewer_notes = reviewer_notes or "Marked as ambiguous by reviewer"
+        elif confirmed_label is not None:
+            if confirmed_label == label_record.proposed_label:
+                label_record.reviewer_status = "CONFIRMED"
+            else:
+                label_record.reviewer_status = "OVERRIDDEN"
+            label_record.final_label = confirmed_label
+            label_record.labeling_method = "MANUAL_EXPERT"
+            if reviewer_notes:
+                label_record.reviewer_notes = reviewer_notes
+        label_record.updated_at = utc_now()
+        return label_record
+
+
+class SyntheticBenchmarkQuarantine:
+    """Generates synthetic traces strictly marked with data_source=SYNTHETIC for pipeline testing and edge cases."""
+
+    @classmethod
+    def generate_benchmark_traces(cls, count_per_archetype: int = 5) -> List[Tuple[FeatureVector, BehaviorArchetype]]:
+        """Generate controlled test vectors across the 4 experimental archetypes."""
+        records: List[Tuple[FeatureVector, BehaviorArchetype]] = []
+
+        for i in range(count_per_archetype):
+            # 1. Systematic Verifier
+            f_sys = FeatureVector(
+                session_id=f"syn_sys_{i+1:03d}",
+                data_source=DataSourceType.SYNTHETIC,
+                problem_id=f"benchmark_prob_{i % 5}",
+                loc=25 + i * 3,
+                ast_node_count=120 + i * 15,
+                ast_max_depth=4,
+                cyclomatic_complexity=3,
+                function_count=2,
+                has_traceback_input=True,
+                error_desc_length=150,
+                error_family_syntax=False,
+                error_family_type_or_value=True,
+                ast_first_step=True,
+                static_to_exec_ratio=2.5,
+                failed_tool_ratio=0.0,
+                tool_sequence_entropy=0.82,
+                total_investigation_steps=5,
+                hypothesis_count=2,
+                hypothesis_rejection_ratio=0.5,
+                countercheck_execution_rate=1.0,
+                direct_evidence_ratio=0.8,
+            )
+            records.append((f_sys, BehaviorArchetype.SYSTEMATIC_VERIFIER))
+
+            # 2. Blind Trial
+            f_blind = FeatureVector(
+                session_id=f"syn_blind_{i+1:03d}",
+                data_source=DataSourceType.SYNTHETIC,
+                problem_id=f"benchmark_prob_{i % 5}",
+                loc=15 + i * 2,
+                ast_node_count=80 + i * 10,
+                ast_max_depth=3,
+                cyclomatic_complexity=2,
                 function_count=1,
                 has_traceback_input=False,
-                error_desc_length=15 + (i % 10),
+                error_desc_length=20,
+                error_family_syntax=False,
+                error_family_type_or_value=False,
+                ast_first_step=False,
+                static_to_exec_ratio=0.2,
+                failed_tool_ratio=0.60,
+                tool_sequence_entropy=0.35,
+                total_investigation_steps=6,
+                hypothesis_count=3,
+                hypothesis_rejection_ratio=0.0,
+                countercheck_execution_rate=0.0,
+                direct_evidence_ratio=0.2,
+            )
+            records.append((f_blind, BehaviorArchetype.BLIND_TRIAL))
+
+            # 3. Symptom Fixated
+            f_symp = FeatureVector(
+                session_id=f"syn_symp_{i+1:03d}",
+                data_source=DataSourceType.SYNTHETIC,
+                problem_id=f"benchmark_prob_{i % 5}",
+                loc=18 + i * 2,
+                ast_node_count=90 + i * 8,
+                ast_max_depth=3,
+                cyclomatic_complexity=2,
+                function_count=1,
+                has_traceback_input=True,
+                error_desc_length=80,
                 error_family_syntax=False,
                 error_family_type_or_value=True,
                 ast_first_step=False,
-                static_to_exec_ratio=0.25,
-                failed_tool_ratio=0.40,
-                tool_sequence_entropy=0.40,
-                total_investigation_steps=5 + (i % 4),
-                hypothesis_churn_count=3 + (i % 2),
-                hypothesis_rejection_ratio=0.66,
+                static_to_exec_ratio=0.8,
+                failed_tool_ratio=0.15,
+                tool_sequence_entropy=0.55,
+                total_investigation_steps=4,
+                hypothesis_count=1,
+                hypothesis_rejection_ratio=0.0,
                 countercheck_execution_rate=0.0,
-                direct_evidence_ratio=0.20,
+                direct_evidence_ratio=0.5,
             )
-            records.append(LabeledSessionRecord(
-                features=feat,
-                provenance=LabelProvenance(
-                    session_id=feat.session_id,
-                    label=BehaviorArchetype.RAPID_TRIAL_AND_ERROR,
-                    labeling_method="SYNTHETIC_BENCHMARK",
-                    reviewer_id="generator",
-                    confidence=1.0,
-                ),
-            ))
+            records.append((f_symp, BehaviorArchetype.SYMPTOM_FIXATED))
 
-        # 3. Unfocused Exploration Archetype
-        for i in range(n_per_class):
-            pid = problem_pool[i % len(problem_pool)]
-            feat = TelemetryFeatures(
-                session_id=f"synth_unfocused_{i:03d}",
-                is_synthetic=True,
-                problem_id=pid,
-                loc=25 + (i % 15),
-                ast_node_count=60 + (i % 30),
-                ast_max_depth=5 + (i % 3),
-                cyclomatic_complexity=4 + (i % 3),
-                function_count=2 + (i % 2),
-                has_traceback_input=(i % 2 == 0),
-                error_desc_length=10 + (i % 10),
+            # 4. Guess and Check
+            f_guess = FeatureVector(
+                session_id=f"syn_guess_{i+1:03d}",
+                data_source=DataSourceType.SYNTHETIC,
+                problem_id=f"benchmark_prob_{i % 5}",
+                loc=20 + i * 2,
+                ast_node_count=100 + i * 10,
+                ast_max_depth=3,
+                cyclomatic_complexity=2,
+                function_count=1,
+                has_traceback_input=False,
+                error_desc_length=40,
                 error_family_syntax=True,
                 error_family_type_or_value=False,
-                ast_first_step=(i % 2 == 0),
-                static_to_exec_ratio=0.8,
-                failed_tool_ratio=0.60 + ((i % 4) * 0.05),
-                tool_sequence_entropy=0.92,
-                total_investigation_steps=7 + (i % 3),
-                hypothesis_churn_count=4 + (i % 3),
-                hypothesis_rejection_ratio=0.80,
-                countercheck_execution_rate=0.2,
-                direct_evidence_ratio=0.35,
+                ast_first_step=False,
+                static_to_exec_ratio=0.4,
+                failed_tool_ratio=0.20,
+                tool_sequence_entropy=0.60,
+                total_investigation_steps=7,
+                hypothesis_count=4,
+                hypothesis_rejection_ratio=0.75,
+                countercheck_execution_rate=0.0,
+                direct_evidence_ratio=0.3,
             )
-            records.append(LabeledSessionRecord(
-                features=feat,
-                provenance=LabelProvenance(
-                    session_id=feat.session_id,
-                    label=BehaviorArchetype.UNFOCUSED_EXPLORATION,
-                    labeling_method="SYNTHETIC_BENCHMARK",
-                    reviewer_id="generator",
-                    confidence=1.0,
-                ),
-            ))
+            records.append((f_guess, BehaviorArchetype.GUESS_AND_CHECK))
 
         return records

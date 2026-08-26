@@ -10,18 +10,32 @@ from typing import Any, Dict, List, Optional
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from trace.agent.diff_engine import CodeDiffEngine
 from trace.agent.orchestrator import InvestigationOrchestrator
 from trace.api.schemas import (
+    AnswerSocraticRequest,
+    CodeRevisionDTO,
     CountercheckDTO,
+    CreateCodeRevisionRequest,
     CreateSessionRequest,
+    CreateStudentHypothesisRequest,
+    CreateStudentTestInputRequest,
     EvidenceDTO,
     FinalDiagnosisDTO,
     HypothesisDTO,
+    InteractiveTimelineResponse,
+    InteractionTurnDTO,
     ObservationDTO,
     PlanStepDTO,
+    RevisionsListResponse,
     SessionDetailResponse,
     SessionListResponse,
     SessionSummaryDTO,
+    SocraticPromptDTO,
+    StudentActivitySummaryDTO,
+    StudentHypothesisDTO,
+    StudentTestExecutionResponse,
+    StudentTestInputDTO,
 )
 from trace.core.events import EventType, TraceEvent, global_event_bus
 from trace.core.state import LifecycleState
@@ -31,6 +45,7 @@ from trace.db.session import get_session_factory
 from trace.llm.mock_provider import MockLLMProvider
 from trace.llm.provider import LLMProviderFactory
 from trace.services.event_broadcaster import global_broadcaster
+from trace.tools.executor import PythonExecutorTool
 
 # Set of active investigation session IDs to prevent duplicate concurrent runs
 _ACTIVE_INVESTIGATIONS: set[str] = set()
@@ -129,6 +144,83 @@ def map_session_record_to_detail(record: SessionRecord) -> SessionDetailResponse
         for c in record.counterchecks
     ]
 
+    # Milestone v0.5 Interactive Student Artifacts
+    shyp_dtos = [
+        StudentHypothesisDTO(
+            id=sh.id,
+            turn_number=sh.turn_number,
+            hypothesis_text=sh.hypothesis_text,
+            target_function_or_line=sh.target_function_or_line,
+            student_confidence=sh.student_confidence,
+            status=sh.status,
+            evaluation_observation_id=sh.evaluation_observation_id,
+            created_at=sh.created_at.isoformat() if sh.created_at else "",
+        )
+        for sh in getattr(record, "student_hypotheses", [])
+    ]
+
+    rev_dtos = [
+        CodeRevisionDTO(
+            id=rev.id,
+            revision_number=rev.revision_number,
+            source_code=rev.source_code,
+            intent_notes=rev.intent_notes,
+            time_since_previous_sec=rev.time_since_previous_sec,
+            lines_added=rev.lines_added,
+            lines_deleted=rev.lines_deleted,
+            lines_modified=rev.lines_modified,
+            total_loc=rev.total_loc,
+            cyclomatic_complexity_delta=rev.cyclomatic_complexity_delta,
+            modified_ast_nodes=rev.modified_ast_nodes,
+            modified_functions=rev.modified_functions,
+            execution_success=rev.execution_success,
+            runtime_error_type=rev.runtime_error_type,
+            resolved_error=rev.resolved_error,
+            created_at=rev.created_at.isoformat() if rev.created_at else "",
+        )
+        for rev in getattr(record, "revisions", [])
+    ]
+
+    stest_dtos = [
+        StudentTestInputDTO(
+            id=st.id,
+            turn_number=st.turn_number,
+            input_expression=st.input_expression,
+            student_rationale=st.student_rationale,
+            is_boundary_case=st.is_boundary_case,
+            executed=st.executed,
+            execution_success=st.execution_success,
+            stdout=st.stdout,
+            stderr=st.stderr,
+            exception_type=st.exception_type,
+            execution_time_ms=st.execution_time_ms,
+            created_at=st.created_at.isoformat() if st.created_at else "",
+        )
+        for st in getattr(record, "student_test_inputs", [])
+    ]
+
+    turn_dtos = [
+        InteractionTurnDTO(
+            id=t.id,
+            turn_number=t.turn_number,
+            speaker=t.speaker,
+            action_type=t.action_type,
+            content_text=t.content_text,
+            referenced_entity_id=t.referenced_entity_id,
+            created_at=t.created_at.isoformat() if t.created_at else "",
+        )
+        for t in getattr(record, "interaction_turns", [])
+    ]
+
+    activity_dto = StudentActivitySummaryDTO(
+        revisions_count=len(rev_dtos),
+        hypotheses_count=len(shyp_dtos),
+        custom_tests_count=len(stest_dtos),
+        boundary_tests_count=sum(1 for st in stest_dtos if st.is_boundary_case),
+        socratic_questions_answered=sum(1 for t in turn_dtos if t.action_type == "ANSWER_SOCRATIC_PROMPT"),
+        total_turns=len(turn_dtos),
+    )
+
     return SessionDetailResponse(
         id=record.id,
         title=record.title,
@@ -137,6 +229,7 @@ def map_session_record_to_detail(record: SessionRecord) -> SessionDetailResponse
         file_path=record.file_path,
         error_description=record.error_description,
         traceback_input=record.traceback_input,
+        mode=getattr(record, "mode", "GUIDED") or "GUIDED",
         status=record.status,
         confidence=record.confidence,
         created_at=record.created_at.isoformat() if record.created_at else "",
@@ -147,6 +240,11 @@ def map_session_record_to_detail(record: SessionRecord) -> SessionDetailResponse
         evidence=ev_dtos,
         hypotheses=hyp_dtos,
         counterchecks=c_dtos,
+        student_hypotheses=shyp_dtos,
+        revisions=rev_dtos,
+        student_test_inputs=stest_dtos,
+        interaction_turns=turn_dtos,
+        student_activity=activity_dto,
     )
 
 
@@ -167,8 +265,39 @@ class SessionService:
             title=request.title,
             error_description=request.error_description,
             traceback_input=request.traceback_input,
+            mode=getattr(request, "mode", "GUIDED") or "GUIDED",
         )
-        return map_session_record_to_detail(record)
+
+        # Log initial turn
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=1,
+            speaker="STUDENT",
+            action_type="SUBMIT_INITIAL_BUG",
+            content_text=f"Submitted initial code for goal: '{request.user_goal}'",
+        )
+
+        # Create initial Revision 1
+        diff_info = CodeDiffEngine.calculate_diff("", request.source_code)
+        await self.repo.add_code_revision(
+            session_id=session_id,
+            source_code=request.source_code,
+            intent_notes="Initial bug submission",
+            revision_number=1,
+            time_since_previous_sec=0.0,
+            lines_added=diff_info["lines_added"],
+            lines_deleted=diff_info["lines_deleted"],
+            lines_modified=diff_info["lines_modified"],
+            total_loc=diff_info["total_loc"],
+            cyclomatic_complexity_delta=diff_info["cyclomatic_complexity_delta"],
+            modified_ast_nodes=diff_info["modified_ast_nodes"],
+            modified_functions=diff_info["modified_functions"],
+            execution_success=False,
+        )
+
+        # Refresh session snapshot
+        fresh_record = await self.repo.get_session(session_id)
+        return map_session_record_to_detail(fresh_record or record)
 
     async def create_session_from_upload(
         self,
@@ -177,6 +306,7 @@ class SessionService:
         user_goal: str,
         error_description: Optional[str] = None,
         traceback_input: Optional[str] = None,
+        mode: str = "GUIDED",
     ) -> SessionDetailResponse:
         """Validate and create session from uploaded Python file."""
         if not filename.endswith(".py"):
@@ -207,8 +337,329 @@ class SessionService:
             title=f"Investigation: {safe_name}",
             error_description=error_description,
             traceback_input=traceback_input,
+            mode=mode,
         )
-        return map_session_record_to_detail(record)
+
+        # Log initial turn and revision
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=1,
+            speaker="STUDENT",
+            action_type="SUBMIT_INITIAL_BUG",
+            content_text=f"Uploaded {safe_name} for goal: '{user_goal}'",
+        )
+
+        diff_info = CodeDiffEngine.calculate_diff("", source_code)
+        await self.repo.add_code_revision(
+            session_id=session_id,
+            source_code=source_code,
+            intent_notes=f"Uploaded file {safe_name}",
+            revision_number=1,
+            time_since_previous_sec=0.0,
+            lines_added=diff_info["lines_added"],
+            lines_deleted=diff_info["lines_deleted"],
+            lines_modified=diff_info["lines_modified"],
+            total_loc=diff_info["total_loc"],
+            cyclomatic_complexity_delta=diff_info["cyclomatic_complexity_delta"],
+            modified_ast_nodes=diff_info["modified_ast_nodes"],
+            modified_functions=diff_info["modified_functions"],
+        )
+
+        fresh_record = await self.repo.get_session(session_id)
+        return map_session_record_to_detail(fresh_record or record)
+
+    # ========================================================================
+    # Milestone v0.5 Interactive Student Action Handlers
+    # ========================================================================
+
+    async def submit_student_hypothesis(
+        self,
+        session_id: str,
+        request: CreateStudentHypothesisRequest,
+    ) -> StudentHypothesisDTO:
+        """Record and broadcast a hypothesis articulated by the student."""
+        session = await self.repo.get_session(session_id)
+        if not session:
+            raise KeyError(f"Session '{session_id}' not found.")
+
+        turns = await self.repo.list_interaction_turns(session_id)
+        next_turn = len(turns) + 1
+
+        shyp_record = await self.repo.add_student_hypothesis(
+            session_id=session_id,
+            hypothesis_text=request.hypothesis_text,
+            target_function_or_line=request.target_function_or_line,
+            student_confidence=request.student_confidence,
+            turn_number=next_turn,
+        )
+
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=next_turn,
+            speaker="STUDENT",
+            action_type="PROPOSE_HYPOTHESIS",
+            content_text=request.hypothesis_text,
+            referenced_entity_id=shyp_record.id,
+        )
+
+        # Broadcast SSE Event
+        payload = {
+            "session_id": session_id,
+            "hypothesis_id": shyp_record.id,
+            "hypothesis_text": request.hypothesis_text,
+            "turn_number": next_turn,
+        }
+        await global_broadcaster.broadcast(session_id, {
+            "event_type": EventType.STUDENT_ACTION_RECORDED.value,
+            "payload": payload,
+            "message": f"Student proposed hypothesis: '{request.hypothesis_text[:50]}...'",
+        })
+
+        return StudentHypothesisDTO(
+            id=shyp_record.id,
+            turn_number=shyp_record.turn_number,
+            hypothesis_text=shyp_record.hypothesis_text,
+            target_function_or_line=shyp_record.target_function_or_line,
+            student_confidence=shyp_record.student_confidence,
+            status=shyp_record.status,
+            evaluation_observation_id=shyp_record.evaluation_observation_id,
+            created_at=shyp_record.created_at.isoformat() if shyp_record.created_at else "",
+        )
+
+    async def submit_code_revision(
+        self,
+        session_id: str,
+        request: CreateCodeRevisionRequest,
+    ) -> CodeRevisionDTO:
+        """Process, diff, and execute a student code revision attempt."""
+        session = await self.repo.get_session(session_id)
+        if not session:
+            raise KeyError(f"Session '{session_id}' not found.")
+
+        latest_rev = await self.repo.get_latest_code_revision(session_id)
+        old_code = latest_rev.source_code if latest_rev else session.source_code
+
+        # Calculate AST & structural diff
+        diff = CodeDiffEngine.calculate_diff(old_code, request.source_code)
+
+        # Test execution in sandbox
+        executor = PythonExecutorTool()
+        tool_res = executor.execute(source_code=request.source_code)
+        
+        exec_success = tool_res.success
+        out_data = tool_res.output if isinstance(tool_res.output, dict) else {}
+        err_type = out_data.get("exception_type")
+        resolved = exec_success
+
+        revisions = await self.repo.list_code_revisions(session_id)
+        next_rev_num = len(revisions) + 1
+
+        rev_record = await self.repo.add_code_revision(
+            session_id=session_id,
+            source_code=request.source_code,
+            intent_notes=request.intent_notes,
+            revision_number=next_rev_num,
+            time_since_previous_sec=request.time_since_previous_sec,
+            lines_added=diff["lines_added"],
+            lines_deleted=diff["lines_deleted"],
+            lines_modified=diff["lines_modified"],
+            total_loc=diff["total_loc"],
+            cyclomatic_complexity_delta=diff["cyclomatic_complexity_delta"],
+            modified_ast_nodes=diff["modified_ast_nodes"],
+            modified_functions=diff["modified_functions"],
+            execution_success=exec_success,
+            runtime_error_type=err_type,
+            resolved_error=resolved,
+        )
+
+        turns = await self.repo.list_interaction_turns(session_id)
+        next_turn = len(turns) + 1
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=next_turn,
+            speaker="STUDENT",
+            action_type="SUBMIT_CODE_REVISION",
+            content_text=f"Revision #{next_rev_num} submitted: {diff['lines_added']} added, {diff['lines_deleted']} deleted.",
+            referenced_entity_id=rev_record.id,
+        )
+
+        # Broadcast SSE Event
+        await global_broadcaster.broadcast(session_id, {
+            "event_type": EventType.REVISION_ANALYZED.value,
+            "payload": {
+                "revision_id": rev_record.id,
+                "revision_number": next_rev_num,
+                "lines_added": diff["lines_added"],
+                "lines_deleted": diff["lines_deleted"],
+                "execution_success": exec_success,
+                "resolved_error": resolved,
+            },
+            "message": f"Code Revision #{next_rev_num} analyzed: Execution {'succeeded' if exec_success else 'failed'}.",
+        })
+
+        return CodeRevisionDTO(
+            id=rev_record.id,
+            revision_number=rev_record.revision_number,
+            source_code=rev_record.source_code,
+            intent_notes=rev_record.intent_notes,
+            time_since_previous_sec=rev_record.time_since_previous_sec,
+            lines_added=rev_record.lines_added,
+            lines_deleted=rev_record.lines_deleted,
+            lines_modified=rev_record.lines_modified,
+            total_loc=rev_record.total_loc,
+            cyclomatic_complexity_delta=rev_record.cyclomatic_complexity_delta,
+            modified_ast_nodes=rev_record.modified_ast_nodes,
+            modified_functions=rev_record.modified_functions,
+            execution_success=rev_record.execution_success,
+            runtime_error_type=rev_record.runtime_error_type,
+            resolved_error=rev_record.resolved_error,
+            created_at=rev_record.created_at.isoformat() if rev_record.created_at else "",
+        )
+
+    async def submit_student_test_input(
+        self,
+        session_id: str,
+        request: CreateStudentTestInputRequest,
+    ) -> StudentTestExecutionResponse:
+        """Capture and execute a student-proposed test input against the current code."""
+        session = await self.repo.get_session(session_id)
+        if not session:
+            raise KeyError(f"Session '{session_id}' not found.")
+
+        turns = await self.repo.list_interaction_turns(session_id)
+        next_turn = len(turns) + 1
+
+        test_record = await self.repo.add_student_test_input(
+            session_id=session_id,
+            input_expression=request.input_expression,
+            student_rationale=request.student_rationale,
+            is_boundary_case=request.is_boundary_case,
+            turn_number=next_turn,
+        )
+
+        # Build test harness: append input expression to the session's active code
+        harness = f"{session.source_code}\n\n# Student Test Input:\nprint({request.input_expression})\n"
+        executor = PythonExecutorTool()
+        tool_res = executor.execute(source_code=harness)
+
+        out_data = tool_res.output if isinstance(tool_res.output, dict) else {}
+        stdout_txt = out_data.get("stdout", "")
+        stderr_txt = out_data.get("stderr", "")
+        err_type = out_data.get("exception_type")
+        exec_ms = float(out_data.get("execution_time_ms", 0.0))
+
+        await self.repo.update_student_test_input_result(
+            test_id=test_record.id,
+            executed=True,
+            execution_success=tool_res.success,
+            stdout=stdout_txt,
+            stderr=stderr_txt,
+            exception_type=err_type,
+            execution_time_ms=exec_ms,
+        )
+
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=next_turn,
+            speaker="STUDENT",
+            action_type="PROPOSE_TEST_INPUT",
+            content_text=f"Tested: {request.input_expression} -> {'Success' if tool_res.success else err_type or 'Error'}",
+            referenced_entity_id=test_record.id,
+        )
+
+        # Broadcast SSE Event
+        await global_broadcaster.broadcast(session_id, {
+            "event_type": EventType.TEST_INPUT_EXECUTED.value,
+            "payload": {
+                "test_id": test_record.id,
+                "input_expression": request.input_expression,
+                "execution_success": tool_res.success,
+                "stdout": stdout_txt,
+                "stderr": stderr_txt,
+            },
+            "message": f"Student test '{request.input_expression}' executed: {'Passed' if tool_res.success else 'Exception triggered'}.",
+        })
+
+        return StudentTestExecutionResponse(
+            test_id=test_record.id,
+            executed=True,
+            execution_success=tool_res.success,
+            stdout=stdout_txt,
+            stderr=stderr_txt,
+            exception_type=err_type,
+            execution_time_ms=exec_ms,
+        )
+
+    async def answer_socratic_prompt(
+        self,
+        session_id: str,
+        request: AnswerSocraticRequest,
+    ) -> SessionDetailResponse:
+        """Record response to or skip of a Socratic question."""
+        session = await self.repo.get_session(session_id)
+        if not session:
+            raise KeyError(f"Session '{session_id}' not found.")
+
+        turns = await self.repo.list_interaction_turns(session_id)
+        next_turn = len(turns) + 1
+
+        action_type = "SKIP_INTERACTION" if request.skip else "ANSWER_SOCRATIC_PROMPT"
+        content = "Skipped question" if request.skip else (request.student_response or "Acknowledged")
+
+        await self.repo.add_interaction_turn(
+            session_id=session_id,
+            turn_number=next_turn,
+            speaker="STUDENT",
+            action_type=action_type,
+            content_text=content,
+            referenced_entity_id=request.prompt_id,
+        )
+
+        fresh_session = await self.repo.get_session(session_id)
+        return map_session_record_to_detail(fresh_session or session)
+
+    async def list_revisions(self, session_id: str) -> RevisionsListResponse:
+        """Get all code revisions for a session."""
+        revs = await self.repo.list_code_revisions(session_id)
+        dtos = [
+            CodeRevisionDTO(
+                id=r.id,
+                revision_number=r.revision_number,
+                source_code=r.source_code,
+                intent_notes=r.intent_notes,
+                time_since_previous_sec=r.time_since_previous_sec,
+                lines_added=r.lines_added,
+                lines_deleted=r.lines_deleted,
+                lines_modified=r.lines_modified,
+                total_loc=r.total_loc,
+                cyclomatic_complexity_delta=r.cyclomatic_complexity_delta,
+                modified_ast_nodes=r.modified_ast_nodes,
+                modified_functions=r.modified_functions,
+                execution_success=r.execution_success,
+                runtime_error_type=r.runtime_error_type,
+                resolved_error=r.resolved_error,
+                created_at=r.created_at.isoformat() if r.created_at else "",
+            )
+            for r in revs
+        ]
+        return RevisionsListResponse(session_id=session_id, revisions=dtos, total=len(dtos))
+
+    async def list_timeline(self, session_id: str) -> InteractiveTimelineResponse:
+        """Get full chronological interaction turns for a session."""
+        turns = await self.repo.list_interaction_turns(session_id)
+        dtos = [
+            InteractionTurnDTO(
+                id=t.id,
+                turn_number=t.turn_number,
+                speaker=t.speaker,
+                action_type=t.action_type,
+                content_text=t.content_text,
+                referenced_entity_id=t.referenced_entity_id,
+                created_at=t.created_at.isoformat() if t.created_at else "",
+            )
+            for t in turns
+        ]
+        return InteractiveTimelineResponse(session_id=session_id, turns=dtos, total_turns=len(dtos))
 
     async def get_session(self, session_id: str) -> Optional[SessionDetailResponse]:
         """Fetch session snapshot."""

@@ -9,13 +9,19 @@ from pydantic import BaseModel, Field
 
 from trace.core.evidence import Evidence, EvidenceRelation, EvidenceType
 from trace.core.models import (
+    CodeRevision,
     FinalDiagnosis,
     Hypothesis,
     HypothesisStatus,
+    InteractionTurn,
+    InvestigationMode,
     InvestigationPlan,
     Observation,
     PlanStep,
+    SocraticPrompt,
     StepStatus,
+    StudentHypothesis,
+    StudentTestInput,
 )
 
 
@@ -26,6 +32,7 @@ class LifecycleState(str, Enum):
     PLANNING = "PLANNING"
     INVESTIGATING = "INVESTIGATING"
     TESTING = "TESTING"
+    AWAITING_STUDENT_INPUT = "AWAITING_STUDENT_INPUT"  # v0.5 Interactive Mode pause state
     EVALUATING = "EVALUATING"
     REPLANNING = "REPLANNING"
     DIAGNOSING = "DIAGNOSING"
@@ -38,28 +45,43 @@ class LifecycleState(str, Enum):
 VALID_TRANSITIONS: Dict[LifecycleState, Set[LifecycleState]] = {
     LifecycleState.CREATED: {LifecycleState.UNDERSTANDING, LifecycleState.BLOCKED},
     LifecycleState.UNDERSTANDING: {LifecycleState.PLANNING, LifecycleState.BLOCKED},
-    LifecycleState.PLANNING: {LifecycleState.INVESTIGATING, LifecycleState.BLOCKED},
+    LifecycleState.PLANNING: {
+        LifecycleState.INVESTIGATING,
+        LifecycleState.AWAITING_STUDENT_INPUT,
+        LifecycleState.BLOCKED,
+    },
+    LifecycleState.AWAITING_STUDENT_INPUT: {
+        LifecycleState.INVESTIGATING,
+        LifecycleState.TESTING,
+        LifecycleState.REPLANNING,
+        LifecycleState.DIAGNOSING,
+        LifecycleState.BLOCKED,
+    },
     LifecycleState.INVESTIGATING: {
         LifecycleState.TESTING,
         LifecycleState.EVALUATING,
         LifecycleState.REPLANNING,
+        LifecycleState.AWAITING_STUDENT_INPUT,
         LifecycleState.DIAGNOSING,
         LifecycleState.BLOCKED,
     },
     LifecycleState.TESTING: {
         LifecycleState.EVALUATING,
         LifecycleState.INVESTIGATING,
+        LifecycleState.AWAITING_STUDENT_INPUT,
         LifecycleState.BLOCKED,
     },
     LifecycleState.EVALUATING: {
         LifecycleState.INVESTIGATING,
         LifecycleState.TESTING,
+        LifecycleState.AWAITING_STUDENT_INPUT,
         LifecycleState.REPLANNING,
         LifecycleState.DIAGNOSING,
         LifecycleState.BLOCKED,
     },
     LifecycleState.REPLANNING: {
         LifecycleState.INVESTIGATING,
+        LifecycleState.AWAITING_STUDENT_INPUT,
         LifecycleState.DIAGNOSING,
         LifecycleState.BLOCKED,
     },
@@ -101,6 +123,8 @@ class AgentState(BaseModel):
     error_description: Optional[str] = None
     traceback_input: Optional[str] = None
     
+    # Mode & Investigation State
+    mode: InvestigationMode = InvestigationMode.GUIDED
     current_plan: Optional[InvestigationPlan] = None
     current_step_index: int = 0
     completed_steps: List[PlanStep] = Field(default_factory=list)
@@ -109,6 +133,13 @@ class AgentState(BaseModel):
     evidence_store: List[Evidence] = Field(default_factory=list)
     hypotheses: List[Hypothesis] = Field(default_factory=list)
     tool_history: List[ToolCallRecord] = Field(default_factory=list)
+    
+    # Milestone v0.5 Interactive Student Artifacts
+    student_hypotheses: List[StudentHypothesis] = Field(default_factory=list)
+    code_revisions: List[CodeRevision] = Field(default_factory=list)
+    student_test_inputs: List[StudentTestInput] = Field(default_factory=list)
+    interaction_turns: List[InteractionTurn] = Field(default_factory=list)
+    active_socratic_prompt: Optional[SocraticPrompt] = None
     
     iteration_count: int = 0
     max_iterations: int = Field(default=8, ge=1, le=20)
@@ -136,6 +167,28 @@ class AgentState(BaseModel):
     def is_terminal(self) -> bool:
         """Check if the agent reached a terminal state."""
         return self.status in {LifecycleState.COMPLETED, LifecycleState.BLOCKED}
+
+    def add_student_hypothesis(self, hypothesis: StudentHypothesis) -> None:
+        """Record a student-articulated hypothesis."""
+        self.student_hypotheses.append(hypothesis)
+
+    def add_code_revision(self, revision: CodeRevision) -> None:
+        """Record a student code revision attempt."""
+        self.code_revisions.append(revision)
+        # Update active source code with latest revision
+        self.source_code = revision.source_code
+
+    def add_student_test_input(self, test_input: StudentTestInput) -> None:
+        """Record a student proposed test input."""
+        self.student_test_inputs.append(test_input)
+
+    def add_interaction_turn(self, turn: InteractionTurn) -> None:
+        """Record a sequential dialogue/action turn in the timeline."""
+        self.interaction_turns.append(turn)
+
+    def set_socratic_prompt(self, prompt: Optional[SocraticPrompt]) -> None:
+        """Set or clear the active Socratic inquiry."""
+        self.active_socratic_prompt = prompt
 
     def record_tool_call(
         self,

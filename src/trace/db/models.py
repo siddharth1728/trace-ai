@@ -40,6 +40,9 @@ class SessionRecord(Base):
     error_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     traceback_input: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Investigation Mode: GUIDED vs INTERACTIVE
+    mode: Mapped[str] = mapped_column(String(32), default="GUIDED", index=True)
+
     # Product status: CREATED, RUNNING, COMPLETED, FAILED, BLOCKED
     status: Mapped[str] = mapped_column(String(32), default="CREATED", index=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
@@ -76,11 +79,24 @@ class SessionRecord(Base):
     events: Mapped[List["SessionEventRecord"]] = relationship(
         "SessionEventRecord", back_populates="session", cascade="all, delete-orphan"
     )
+    # Milestone v0.5 Interactive Relationships
+    student_hypotheses: Mapped[List["StudentHypothesisRecord"]] = relationship(
+        "StudentHypothesisRecord", back_populates="session", cascade="all, delete-orphan"
+    )
+    revisions: Mapped[List["CodeRevisionRecord"]] = relationship(
+        "CodeRevisionRecord", back_populates="session", cascade="all, delete-orphan"
+    )
+    student_test_inputs: Mapped[List["StudentTestInputRecord"]] = relationship(
+        "StudentTestInputRecord", back_populates="session", cascade="all, delete-orphan"
+    )
+    interaction_turns: Mapped[List["InteractionTurnRecord"]] = relationship(
+        "InteractionTurnRecord", back_populates="session", cascade="all, delete-orphan"
+    )
     telemetry: Mapped[Optional["SessionTelemetryRecord"]] = relationship(
         "SessionTelemetryRecord", back_populates="session", cascade="all, delete-orphan", uselist=False
     )
-    prediction: Mapped[Optional["BehaviorPredictionRecord"]] = relationship(
-        "BehaviorPredictionRecord", back_populates="session", cascade="all, delete-orphan", uselist=False
+    label: Mapped[Optional["BehaviorLabelRecord"]] = relationship(
+        "BehaviorLabelRecord", back_populates="session", cascade="all, delete-orphan", uselist=False
     )
 
     @property
@@ -305,14 +321,22 @@ class SessionEventRecord(Base):
 
 
 class SessionTelemetryRecord(Base):
-    """Represents the 18-feature telemetry vector extracted from a session."""
+    """Represents partitioned 5-category telemetry and tabular features extracted from a session."""
     __tablename__ = "session_telemetry"
 
     session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
-    is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    data_source: Mapped[str] = mapped_column(String(32), default="REAL", index=True)
     problem_id: Mapped[str] = mapped_column(String(128), default="default", index=True)
 
-    # 18 Telemetry Features
+    # 6 Structured Category JSON Blobs
+    user_actions_json: Mapped[str] = mapped_column(Text, default="{}")
+    student_behavior_json: Mapped[str] = mapped_column(Text, default="{}")
+    code_properties_json: Mapped[str] = mapped_column(Text, default="{}")
+    investigation_context_json: Mapped[str] = mapped_column(Text, default="{}")
+    trace_agent_actions_json: Mapped[str] = mapped_column(Text, default="{}")
+    outcome_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    # Fast indexed scalar features for SQL queries
     loc: Mapped[int] = mapped_column(Integer, default=0)
     ast_node_count: Mapped[int] = mapped_column(Integer, default=0)
     ast_max_depth: Mapped[int] = mapped_column(Integer, default=0)
@@ -330,7 +354,7 @@ class SessionTelemetryRecord(Base):
     tool_sequence_entropy: Mapped[float] = mapped_column(Float, default=0.0)
     total_investigation_steps: Mapped[int] = mapped_column(Integer, default=0)
 
-    hypothesis_churn_count: Mapped[int] = mapped_column(Integer, default=0)
+    hypothesis_count: Mapped[int] = mapped_column(Integer, default=0)
     hypothesis_rejection_ratio: Mapped[float] = mapped_column(Float, default=0.0)
     countercheck_execution_rate: Mapped[float] = mapped_column(Float, default=0.0)
     direct_evidence_ratio: Mapped[float] = mapped_column(Float, default=0.0)
@@ -340,26 +364,125 @@ class SessionTelemetryRecord(Base):
     session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="telemetry")
 
 
-class BehaviorPredictionRecord(Base):
-    """Represents a behavior archetype prediction for a session."""
-    __tablename__ = "behavior_predictions"
+class BehaviorLabelRecord(Base):
+    """Represents candidate and confirmed behavioral labels for human-in-the-loop ML dataset creation."""
+    __tablename__ = "behavior_labels"
+
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
+    proposed_label: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    final_label: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    labeling_method: Mapped[str] = mapped_column(String(32), default="UNLABELED")
+    reviewer_status: Mapped[str] = mapped_column(String(32), default="UNREVIEWED", index=True)
+    reviewer_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    dataset_version: Mapped[str] = mapped_column(String(32), default="v0.4-A")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="label")
+
+
+# ============================================================================
+# Milestone v0.5 Interactive Student Artifact Relational Models
+# ============================================================================
+
+class StudentHypothesisRecord(Base):
+    """Stores hypotheses articulated directly by students."""
+    __tablename__ = "student_hypotheses"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), unique=True, index=True)
-    predicted_archetype: Mapped[str] = mapped_column(String(64), index=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    top_factors_json: Mapped[str] = mapped_column(Text, default="[]")
-    pedagogical_explanation: Mapped[str] = mapped_column(Text, default="")
-    model_type: Mapped[str] = mapped_column(String(64), default="RandomForest")
-    model_version: Mapped[str] = mapped_column(String(32), default="v0.4")
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    turn_number: Mapped[int] = mapped_column(Integer, default=1)
+    hypothesis_text: Mapped[str] = mapped_column(Text)
+    target_function_or_line: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    student_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="UNTESTED", index=True)
+    evaluation_observation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="prediction")
+    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="student_hypotheses")
+
+
+class CodeRevisionRecord(Base):
+    """Stores distinct code modification iterations within a session."""
+    __tablename__ = "code_revisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    source_code: Mapped[str] = mapped_column(Text)
+    intent_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    time_since_previous_sec: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Secure structural diff metrics
+    lines_added: Mapped[int] = mapped_column(Integer, default=0)
+    lines_deleted: Mapped[int] = mapped_column(Integer, default=0)
+    lines_modified: Mapped[int] = mapped_column(Integer, default=0)
+    total_loc: Mapped[int] = mapped_column(Integer, default=0)
+    cyclomatic_complexity_delta: Mapped[int] = mapped_column(Integer, default=0)
+    modified_ast_nodes_json: Mapped[str] = mapped_column(Text, default="[]")
+    modified_functions_json: Mapped[str] = mapped_column(Text, default="[]")
+
+    # Execution outcomes
+    execution_success: Mapped[bool] = mapped_column(Boolean, default=False)
+    runtime_error_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resolved_error: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="revisions")
 
     @property
-    def top_factors(self) -> List[Dict[str, Any]]:
-        return json.loads(self.top_factors_json or "[]")
+    def modified_ast_nodes(self) -> List[str]:
+        return json.loads(self.modified_ast_nodes_json or "[]")
 
-    @top_factors.setter
-    def top_factors(self, val: List[Dict[str, Any]]):
-        self.top_factors_json = json.dumps(val or [])
+    @modified_ast_nodes.setter
+    def modified_ast_nodes(self, val: List[str]):
+        self.modified_ast_nodes_json = json.dumps(val or [])
+
+    @property
+    def modified_functions(self) -> List[str]:
+        return json.loads(self.modified_functions_json or "[]")
+
+    @modified_functions.setter
+    def modified_functions(self, val: List[str]):
+        self.modified_functions_json = json.dumps(val or [])
+
+
+class StudentTestInputRecord(Base):
+    """Stores student-proposed test inputs and sandbox verification outputs."""
+    __tablename__ = "student_test_inputs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    turn_number: Mapped[int] = mapped_column(Integer, default=1)
+    input_expression: Mapped[str] = mapped_column(Text)
+    student_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_boundary_case: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Sandbox execution results
+    executed: Mapped[bool] = mapped_column(Boolean, default=False)
+    execution_success: Mapped[bool] = mapped_column(Boolean, default=False)
+    stdout: Mapped[str] = mapped_column(Text, default="")
+    stderr: Mapped[str] = mapped_column(Text, default="")
+    exception_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    execution_time_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="student_test_inputs")
+
+
+class InteractionTurnRecord(Base):
+    """Stores chronological dialogue/action turns in an interactive session."""
+    __tablename__ = "interaction_turns"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    turn_number: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    speaker: Mapped[str] = mapped_column(String(32), default="STUDENT")  # STUDENT or TRACE
+    action_type: Mapped[str] = mapped_column(String(64))
+    content_text: Mapped[str] = mapped_column(Text)
+    referenced_entity_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    session: Mapped[SessionRecord] = relationship("SessionRecord", back_populates="interaction_turns")
+

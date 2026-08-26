@@ -1,14 +1,18 @@
-/**
- * Centralized Typed API Client for TRACE v0.3 Backend.
- */
-
 import {
+  AnswerSocraticPayload,
+  CodeRevision,
+  CreateCodeRevisionPayload,
   CreateSessionPayload,
+  CreateStudentHypothesisPayload,
+  CreateStudentTestInputPayload,
   HealthResponse,
   InvestigatePayload,
+  InvestigationMode,
   SessionDetail,
   SessionListResponse,
+  StudentHypothesis,
   StudentProfile,
+  StudentTestExecutionResult,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -59,11 +63,13 @@ export const api = {
     file: File,
     userGoal: string,
     errorDescription?: string,
-    tracebackInput?: string
+    tracebackInput?: string,
+    mode: InvestigationMode = 'GUIDED'
   ): Promise<SessionDetail> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('user_goal', userGoal);
+    formData.append('mode', mode);
     if (errorDescription) formData.append('error_description', errorDescription);
     if (tracebackInput) formData.append('traceback_input', tracebackInput);
 
@@ -108,6 +114,82 @@ export const api = {
   },
 
   /**
+   * Submit a student-articulated hypothesis.
+   */
+  async submitStudentHypothesis(
+    sessionId: string,
+    payload: CreateStudentHypothesisPayload
+  ): Promise<StudentHypothesis> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/turns/hypothesis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<StudentHypothesis>(response);
+  },
+
+  /**
+   * Submit a student code revision.
+   */
+  async submitCodeRevision(
+    sessionId: string,
+    payload: CreateCodeRevisionPayload
+  ): Promise<CodeRevision> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/turns/revision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<CodeRevision>(response);
+  },
+
+  /**
+   * Propose and execute a custom student test input.
+   */
+  async submitStudentTestInput(
+    sessionId: string,
+    payload: CreateStudentTestInputPayload
+  ): Promise<StudentTestExecutionResult> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/turns/test-input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<StudentTestExecutionResult>(response);
+  },
+
+  /**
+   * Answer or skip a Socratic question.
+   */
+  async answerSocraticPrompt(
+    sessionId: string,
+    payload: AnswerSocraticPayload
+  ): Promise<SessionDetail> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/turns/answer-socratic`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<SessionDetail>(response);
+  },
+
+  /**
+   * Get all revisions for a session.
+   */
+  async getRevisions(sessionId: string): Promise<{ session_id: string; revisions: CodeRevision[]; total: number }> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/revisions`);
+    return handleResponse<{ session_id: string; revisions: CodeRevision[]; total: number }>(response);
+  },
+
+  /**
+   * Get chronological timeline turns for a session.
+   */
+  async getTimeline(sessionId: string): Promise<{ session_id: string; turns: any[]; total_turns: number }> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/timeline`);
+    return handleResponse<{ session_id: string; turns: any[]; total_turns: number }>(response);
+  },
+
+  /**
    * Delete a debugging session and associated data.
    */
   async deleteSession(sessionId: string): Promise<void> {
@@ -135,3 +217,4 @@ export const api = {
     return handleResponse<any>(response);
   },
 };
+

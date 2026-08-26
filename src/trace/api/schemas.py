@@ -11,6 +11,7 @@ class CreateSessionRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=256, description="Short optional session title")
     error_description: Optional[str] = Field(None, description="Optional description of error observed")
     traceback_input: Optional[str] = Field(None, description="Optional raw Python traceback string")
+    mode: str = Field(default="GUIDED", description="Investigation mode: 'GUIDED' or 'INTERACTIVE'")
 
 
 class InvestigateRequest(BaseModel):
@@ -92,6 +93,7 @@ class SessionSummaryDTO(BaseModel):
     id: str
     title: str
     user_goal: str
+    mode: str = "GUIDED"
     status: str
     confidence: float
     likely_root_cause: Optional[str] = None
@@ -104,6 +106,87 @@ class SessionListResponse(BaseModel):
     total: int
 
 
+# ============================================================================
+# Milestone v0.5 Interactive Student Debugging DTOs
+# ============================================================================
+
+class StudentHypothesisDTO(BaseModel):
+    id: str
+    turn_number: int
+    hypothesis_text: str
+    target_function_or_line: Optional[str] = None
+    student_confidence: Optional[float] = None
+    status: str
+    evaluation_observation_id: Optional[str] = None
+    created_at: str
+
+
+class CodeRevisionDTO(BaseModel):
+    id: str
+    revision_number: int
+    source_code: str
+    intent_notes: Optional[str] = None
+    time_since_previous_sec: float
+    lines_added: int
+    lines_deleted: int
+    lines_modified: int
+    total_loc: int
+    cyclomatic_complexity_delta: int
+    modified_ast_nodes: List[str] = Field(default_factory=list)
+    modified_functions: List[str] = Field(default_factory=list)
+    execution_success: bool
+    runtime_error_type: Optional[str] = None
+    resolved_error: bool
+    created_at: str
+
+
+class StudentTestInputDTO(BaseModel):
+    id: str
+    turn_number: int
+    input_expression: str
+    student_rationale: Optional[str] = None
+    is_boundary_case: bool
+    executed: bool
+    execution_success: bool
+    stdout: str
+    stderr: str
+    exception_type: Optional[str] = None
+    execution_time_ms: float
+    created_at: str
+
+
+class SocraticPromptDTO(BaseModel):
+    id: str
+    question_text: str
+    focus_area: str
+    target_code_snippet: Optional[str] = None
+    suggested_options: List[str] = Field(default_factory=list)
+    turn_number: int
+    answered: bool = False
+    student_response: Optional[str] = None
+    skipped: bool = False
+
+
+class InteractionTurnDTO(BaseModel):
+    id: str
+    turn_number: int
+    speaker: str
+    action_type: str
+    content_text: str
+    referenced_entity_id: Optional[str] = None
+    created_at: str
+
+
+class StudentActivitySummaryDTO(BaseModel):
+    """Deterministic summary of student actions during a session."""
+    revisions_count: int = 0
+    hypotheses_count: int = 0
+    custom_tests_count: int = 0
+    boundary_tests_count: int = 0
+    socratic_questions_answered: int = 0
+    total_turns: int = 0
+
+
 class SessionDetailResponse(BaseModel):
     """Complete detail snapshot of an investigation session."""
     id: str
@@ -113,6 +196,7 @@ class SessionDetailResponse(BaseModel):
     file_path: Optional[str] = None
     error_description: Optional[str] = None
     traceback_input: Optional[str] = None
+    mode: str = "GUIDED"
     status: str
     confidence: float
     created_at: str
@@ -124,6 +208,61 @@ class SessionDetailResponse(BaseModel):
     evidence: List[EvidenceDTO] = Field(default_factory=list)
     hypotheses: List[HypothesisDTO] = Field(default_factory=list)
     counterchecks: List[CountercheckDTO] = Field(default_factory=list)
+
+    # v0.5 Interactive Student Artifacts
+    student_hypotheses: List[StudentHypothesisDTO] = Field(default_factory=list)
+    revisions: List[CodeRevisionDTO] = Field(default_factory=list)
+    student_test_inputs: List[StudentTestInputDTO] = Field(default_factory=list)
+    interaction_turns: List[InteractionTurnDTO] = Field(default_factory=list)
+    active_socratic_prompt: Optional[SocraticPromptDTO] = None
+    student_activity: Optional[StudentActivitySummaryDTO] = None
+
+
+class CreateStudentHypothesisRequest(BaseModel):
+    hypothesis_text: str = Field(..., min_length=2, description="Student's explanation of what is wrong")
+    target_function_or_line: Optional[str] = None
+    student_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class CreateCodeRevisionRequest(BaseModel):
+    source_code: str = Field(..., min_length=1, description="Revised Python code snippet")
+    intent_notes: Optional[str] = Field(None, description="What the student intended to change or fix")
+    time_since_previous_sec: float = Field(default=0.0, ge=0.0)
+
+
+class CreateStudentTestInputRequest(BaseModel):
+    input_expression: str = Field(..., min_length=1, description="Python test call expression or variable setup")
+    student_rationale: Optional[str] = None
+    is_boundary_case: bool = False
+
+
+class AnswerSocraticRequest(BaseModel):
+    prompt_id: str
+    student_response: Optional[str] = None
+    skip: bool = False
+
+
+class StudentTestExecutionResponse(BaseModel):
+    test_id: str
+    executed: bool
+    execution_success: bool
+    stdout: str
+    stderr: str
+    exception_type: Optional[str] = None
+    execution_time_ms: float
+    supports_student_hypothesis: Optional[bool] = None
+
+
+class InteractiveTimelineResponse(BaseModel):
+    session_id: str
+    turns: List[InteractionTurnDTO]
+    total_turns: int
+
+
+class RevisionsListResponse(BaseModel):
+    session_id: str
+    revisions: List[CodeRevisionDTO]
+    total: int
 
 
 class InvestigationStartedResponse(BaseModel):
