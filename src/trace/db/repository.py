@@ -68,6 +68,7 @@ class SessionRepository:
         stmt = (
             select(SessionRecord)
             .where(SessionRecord.id == session_id)
+            .execution_options(populate_existing=True)
             .options(
                 selectinload(SessionRecord.plan_steps),
                 selectinload(SessionRecord.observations),

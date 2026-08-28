@@ -26,7 +26,16 @@ class CodeDiffEngine:
             elif tag == "delete":
                 lines_deleted += (i2 - i1)
             elif tag == "replace":
-                lines_modified += max(i2 - i1, j2 - j1)
+                old_count = i2 - i1
+                new_count = j2 - j1
+                if new_count > old_count:
+                    lines_added += (new_count - old_count)
+                    lines_modified += old_count
+                elif old_count > new_count:
+                    lines_deleted += (old_count - new_count)
+                    lines_modified += new_count
+                else:
+                    lines_modified += new_count
 
         # 2. Non-empty, non-comment LOC for new code
         executable_lines = [l for l in new_lines if l.strip() and not l.strip().startswith("#")]

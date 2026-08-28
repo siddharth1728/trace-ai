@@ -282,3 +282,8 @@ class SyntheticBenchmarkQuarantine:
             records.append((f_guess, BehaviorArchetype.GUESS_AND_CHECK))
 
         return records
+
+
+# Compatibility Aliases
+DatasetAuditor = LabelingWorkflow
+SyntheticBenchmarkDatasetGenerator = SyntheticBenchmarkQuarantine

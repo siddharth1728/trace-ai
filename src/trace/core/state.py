@@ -20,8 +20,11 @@ from trace.core.models import (
     PlanStep,
     SocraticPrompt,
     StepStatus,
+    StudentActionType,
     StudentHypothesis,
+    StudentHypothesisStatus,
     StudentTestInput,
+    TurnSpeaker,
 )
 
 
@@ -323,3 +326,131 @@ class AgentState(BaseModel):
         if self.iteration_count >= self.max_iterations:
             return False
         return True
+
+    # ========================================================================
+    # Milestone v0.5 Interactive Student Debugging Helpers
+    # ========================================================================
+
+    def add_student_hypothesis(
+        self,
+        hypothesis_text: str,
+        target_function_or_line: Optional[str] = None,
+        student_confidence: Optional[float] = None,
+    ) -> StudentHypothesis:
+        """Register a hypothesis formulated directly by the student."""
+        turn_num = len(self.interaction_turns) + 1
+        shyp = StudentHypothesis(
+            session_id=self.session_id,
+            turn_number=turn_num,
+            hypothesis_text=hypothesis_text,
+            target_function_or_line=target_function_or_line,
+            student_confidence=student_confidence,
+            status=StudentHypothesisStatus.UNTESTED,
+        )
+        self.student_hypotheses.append(shyp)
+        self.add_interaction_turn(
+            speaker=TurnSpeaker.STUDENT,
+            action_type=StudentActionType.PROPOSE_HYPOTHESIS.value,
+            content_text=hypothesis_text,
+            referenced_entity_id=shyp.id,
+        )
+        return shyp
+
+    def add_code_revision(
+        self,
+        source_code: str,
+        intent_notes: Optional[str] = None,
+        time_since_previous_sec: float = 0.0,
+        lines_added: int = 0,
+        lines_deleted: int = 0,
+        lines_modified: int = 0,
+        total_loc: int = 0,
+        cyclomatic_complexity_delta: int = 0,
+        modified_ast_nodes: Optional[List[str]] = None,
+        modified_functions: Optional[List[str]] = None,
+        execution_success: bool = False,
+        runtime_error_type: Optional[str] = None,
+        resolved_error: bool = False,
+    ) -> CodeRevision:
+        """Record a student code modification attempt."""
+        rev_num = len(self.code_revisions) + 1
+        rev = CodeRevision(
+            session_id=self.session_id,
+            revision_number=rev_num,
+            source_code=source_code,
+            intent_notes=intent_notes,
+            time_since_previous_sec=time_since_previous_sec,
+            lines_added=lines_added,
+            lines_deleted=lines_deleted,
+            lines_modified=lines_modified,
+            total_loc=total_loc,
+            cyclomatic_complexity_delta=cyclomatic_complexity_delta,
+            modified_ast_nodes=modified_ast_nodes or [],
+            modified_functions=modified_functions or [],
+            execution_success=execution_success,
+            runtime_error_type=runtime_error_type,
+            resolved_error=resolved_error,
+        )
+        self.code_revisions.append(rev)
+        self.source_code = source_code
+        self.add_interaction_turn(
+            speaker=TurnSpeaker.STUDENT,
+            action_type=StudentActionType.SUBMIT_CODE_REVISION.value,
+            content_text=f"Revision #{rev_num} submitted: {lines_added} lines added, {lines_deleted} lines deleted.",
+            referenced_entity_id=rev.id,
+        )
+        return rev
+
+    def add_student_test_input(
+        self,
+        input_expression: str,
+        student_rationale: Optional[str] = None,
+        is_boundary_case: bool = False,
+    ) -> StudentTestInput:
+        """Record a student proposed test case."""
+        turn_num = len(self.interaction_turns) + 1
+        test_in = StudentTestInput(
+            session_id=self.session_id,
+            turn_number=turn_num,
+            input_expression=input_expression,
+            student_rationale=student_rationale,
+            is_boundary_case=is_boundary_case,
+        )
+        self.student_test_inputs.append(test_in)
+        self.add_interaction_turn(
+            speaker=TurnSpeaker.STUDENT,
+            action_type=StudentActionType.PROPOSE_TEST_INPUT.value,
+            content_text=f"Tested: {input_expression}",
+            referenced_entity_id=test_in.id,
+        )
+        return test_in
+
+    def add_interaction_turn(
+        self,
+        speaker: TurnSpeaker,
+        action_type: str,
+        content_text: str,
+        referenced_entity_id: Optional[str] = None,
+    ) -> InteractionTurn:
+        """Append a chronological turn to the interactive conversation."""
+        turn_num = len(self.interaction_turns) + 1
+        turn = InteractionTurn(
+            turn_number=turn_num,
+            speaker=speaker,
+            action_type=action_type,
+            content_text=content_text,
+            referenced_entity_id=referenced_entity_id,
+        )
+        self.interaction_turns.append(turn)
+        return turn
+
+    def set_socratic_prompt(self, prompt: SocraticPrompt) -> None:
+        """Present a Socratic inquiry to the student."""
+        self.active_socratic_prompt = prompt
+        self.add_interaction_turn(
+            speaker=TurnSpeaker.TRACE,
+            action_type="SOCRATIC_PROMPT",
+            content_text=prompt.question_text,
+            referenced_entity_id=prompt.id,
+        )
+

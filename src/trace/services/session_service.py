@@ -409,11 +409,12 @@ class SessionService:
             "hypothesis_text": request.hypothesis_text,
             "turn_number": next_turn,
         }
-        await global_broadcaster.broadcast(session_id, {
-            "event_type": EventType.STUDENT_ACTION_RECORDED.value,
-            "payload": payload,
-            "message": f"Student proposed hypothesis: '{request.hypothesis_text[:50]}...'",
-        })
+        await global_broadcaster.broadcast_event(
+            session_id=session_id,
+            event_type=EventType.STUDENT_ACTION_RECORDED.value,
+            payload=payload,
+            message=f"Student proposed hypothesis: '{request.hypothesis_text[:50]}...'",
+        )
 
         return StudentHypothesisDTO(
             id=shyp_record.id,
@@ -445,10 +446,18 @@ class SessionService:
         # Test execution in sandbox
         executor = PythonExecutorTool()
         tool_res = executor.execute(source_code=request.source_code)
+        exec_data = tool_res.data if isinstance(tool_res.data, dict) else {}
+        exec_exit = exec_data.get("exit_code", 0)
+        exec_has_err = exec_data.get("has_error", False)
+        exec_success = (exec_exit == 0) and not exec_has_err
         
-        exec_success = tool_res.success
-        out_data = tool_res.output if isinstance(tool_res.output, dict) else {}
-        err_type = out_data.get("exception_type")
+        stderr_clean = exec_data.get("stderr", "")
+        err_type = None
+        if not exec_success and stderr_clean:
+            for line in reversed(stderr_clean.strip().splitlines()):
+                if ":" in line and not line.startswith(" "):
+                    err_type = line.split(":", 1)[0].strip()
+                    break
         resolved = exec_success
 
         revisions = await self.repo.list_code_revisions(session_id)
@@ -484,9 +493,10 @@ class SessionService:
         )
 
         # Broadcast SSE Event
-        await global_broadcaster.broadcast(session_id, {
-            "event_type": EventType.REVISION_ANALYZED.value,
-            "payload": {
+        await global_broadcaster.broadcast_event(
+            session_id=session_id,
+            event_type=EventType.REVISION_ANALYZED.value,
+            payload={
                 "revision_id": rev_record.id,
                 "revision_number": next_rev_num,
                 "lines_added": diff["lines_added"],
@@ -494,8 +504,8 @@ class SessionService:
                 "execution_success": exec_success,
                 "resolved_error": resolved,
             },
-            "message": f"Code Revision #{next_rev_num} analyzed: Execution {'succeeded' if exec_success else 'failed'}.",
-        })
+            message=f"Code Revision #{next_rev_num} analyzed: Execution {'succeeded' if exec_success else 'failed'}.",
+        )
 
         return CodeRevisionDTO(
             id=rev_record.id,
@@ -542,16 +552,25 @@ class SessionService:
         executor = PythonExecutorTool()
         tool_res = executor.execute(source_code=harness)
 
-        out_data = tool_res.output if isinstance(tool_res.output, dict) else {}
-        stdout_txt = out_data.get("stdout", "")
-        stderr_txt = out_data.get("stderr", "")
-        err_type = out_data.get("exception_type")
-        exec_ms = float(out_data.get("execution_time_ms", 0.0))
+        exec_data = tool_res.data if isinstance(tool_res.data, dict) else {}
+        stdout_txt = exec_data.get("stdout", "")
+        stderr_txt = exec_data.get("stderr", "")
+        exec_exit = exec_data.get("exit_code", 0)
+        exec_has_err = exec_data.get("has_error", False)
+        exec_success = (exec_exit == 0) and not exec_has_err
+        exec_ms = float(exec_data.get("execution_time_ms", 0.0))
+
+        err_type = None
+        if not exec_success and stderr_txt:
+            for line in reversed(stderr_txt.strip().splitlines()):
+                if ":" in line and not line.startswith(" "):
+                    err_type = line.split(":", 1)[0].strip()
+                    break
 
         await self.repo.update_student_test_input_result(
             test_id=test_record.id,
             executed=True,
-            execution_success=tool_res.success,
+            execution_success=exec_success,
             stdout=stdout_txt,
             stderr=stderr_txt,
             exception_type=err_type,
@@ -563,27 +582,28 @@ class SessionService:
             turn_number=next_turn,
             speaker="STUDENT",
             action_type="PROPOSE_TEST_INPUT",
-            content_text=f"Tested: {request.input_expression} -> {'Success' if tool_res.success else err_type or 'Error'}",
+            content_text=f"Tested: {request.input_expression} -> {'Success' if exec_success else err_type or 'Error'}",
             referenced_entity_id=test_record.id,
         )
 
         # Broadcast SSE Event
-        await global_broadcaster.broadcast(session_id, {
-            "event_type": EventType.TEST_INPUT_EXECUTED.value,
-            "payload": {
+        await global_broadcaster.broadcast_event(
+            session_id=session_id,
+            event_type=EventType.TEST_INPUT_EXECUTED.value,
+            payload={
                 "test_id": test_record.id,
                 "input_expression": request.input_expression,
-                "execution_success": tool_res.success,
+                "execution_success": exec_success,
                 "stdout": stdout_txt,
                 "stderr": stderr_txt,
             },
-            "message": f"Student test '{request.input_expression}' executed: {'Passed' if tool_res.success else 'Exception triggered'}.",
-        })
+            message=f"Student test '{request.input_expression}' executed: {'Passed' if exec_success else 'Exception triggered'}.",
+        )
 
         return StudentTestExecutionResponse(
             test_id=test_record.id,
             executed=True,
-            execution_success=tool_res.success,
+            execution_success=exec_success,
             stdout=stdout_txt,
             stderr=stderr_txt,
             exception_type=err_type,

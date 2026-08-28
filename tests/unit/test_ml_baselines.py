@@ -1,7 +1,7 @@
-"""Unit tests for TRACE v0.4 Baselines, Dataset Quality Auditor, and Experiment Runner."""
+"""Unit tests for TRACE v0.4-A / v0.5 Baselines, Dataset Quality, and Quarantine Suite."""
 
 import pytest
-from trace.ml.schemas import BehaviorArchetype, TelemetryFeatures
+from trace.ml.schemas import BehaviorArchetype, DataSourceType, FeatureVector, TelemetryFeatures
 from trace.ml.baselines import (
     compute_deterministic_habits,
     generate_deterministic_strengths_and_growth,
@@ -9,14 +9,14 @@ from trace.ml.baselines import (
     RuleBasedBehaviorClassifier,
 )
 from trace.ml.dataset import (
-    DatasetAuditor,
-    SyntheticBenchmarkDatasetGenerator,
+    DatasetExporter,
+    LabelingWorkflow,
+    SyntheticBenchmarkQuarantine,
 )
-from trace.ml.experiments import ExperimentRunner
 
 
 def test_deterministic_habits_computation():
-    sample1 = TelemetryFeatures(
+    sample1 = FeatureVector(
         session_id="s1",
         loc=10,
         ast_node_count=20,
@@ -32,12 +32,12 @@ def test_deterministic_habits_computation():
         failed_tool_ratio=0.0,
         tool_sequence_entropy=0.8,
         total_investigation_steps=4,
-        hypothesis_churn_count=2,
+        hypothesis_count=2,
         hypothesis_rejection_ratio=0.5,
         countercheck_execution_rate=1.0,
         direct_evidence_ratio=0.8,
     )
-    sample2 = TelemetryFeatures(
+    sample2 = FeatureVector(
         session_id="s2",
         loc=15,
         ast_node_count=35,
@@ -53,7 +53,7 @@ def test_deterministic_habits_computation():
         failed_tool_ratio=0.4,
         tool_sequence_entropy=0.3,
         total_investigation_steps=6,
-        hypothesis_churn_count=4,
+        hypothesis_count=4,
         hypothesis_rejection_ratio=0.75,
         countercheck_execution_rate=0.0,
         direct_evidence_ratio=0.2,
@@ -74,7 +74,7 @@ def test_deterministic_habits_computation():
 
 
 def test_rule_based_behavior_classifier():
-    sys_sample = TelemetryFeatures(
+    sys_sample = FeatureVector(
         session_id="sys",
         loc=20,
         ast_node_count=40,
@@ -90,12 +90,12 @@ def test_rule_based_behavior_classifier():
         failed_tool_ratio=0.0,
         tool_sequence_entropy=0.8,
         total_investigation_steps=4,
-        hypothesis_churn_count=2,
+        hypothesis_count=2,
         hypothesis_rejection_ratio=0.5,
         countercheck_execution_rate=0.8,
         direct_evidence_ratio=0.8,
     )
-    guess_sample = TelemetryFeatures(
+    guess_sample = FeatureVector(
         session_id="guess",
         loc=10,
         ast_node_count=20,
@@ -111,7 +111,7 @@ def test_rule_based_behavior_classifier():
         failed_tool_ratio=0.3,
         tool_sequence_entropy=0.4,
         total_investigation_steps=5,
-        hypothesis_churn_count=3,
+        hypothesis_count=3,
         hypothesis_rejection_ratio=0.66,
         countercheck_execution_rate=0.0,
         direct_evidence_ratio=0.2,
@@ -120,31 +120,40 @@ def test_rule_based_behavior_classifier():
     pred_sys = RuleBasedBehaviorClassifier.predict_one(sys_sample)
     pred_guess = RuleBasedBehaviorClassifier.predict_one(guess_sample)
 
-    assert pred_sys == BehaviorArchetype.SYSTEMATIC_VERIFICATION
-    assert pred_guess == BehaviorArchetype.RAPID_TRIAL_AND_ERROR
+    assert pred_sys == BehaviorArchetype.SYSTEMATIC_VERIFIER
+    assert pred_guess == BehaviorArchetype.GUESS_AND_CHECK
 
 
-def test_dataset_auditor_and_experiment_runner():
-    # Generate balanced synthetic benchmark dataset
-    records = SyntheticBenchmarkDatasetGenerator.generate_test_dataset(n_per_class=10)
-    assert len(records) == 30
+def test_synthetic_benchmark_quarantine_and_exporter():
+    # 1. Generate quarantined synthetic benchmark traces
+    traces = SyntheticBenchmarkQuarantine.generate_benchmark_traces(count_per_archetype=5)
+    assert len(traces) == 20
+    assert all(f.data_source == DataSourceType.SYNTHETIC for f, _ in traces)
 
-    audit_report = DatasetAuditor.audit(records)
-    assert audit_report.total_samples == 30
-    assert audit_report.synthetic_samples == 30
-    assert audit_report.is_balanced is True
-    assert audit_report.leakage_guard_passed is True
+    features = [f for f, _ in traces]
 
-    # Run comparative experiment benchmark
-    gate_report = ExperimentRunner.run_benchmark(records, n_splits=3)
-    assert gate_report.dataset_size == 30
-    assert gate_report.num_folds == 3
-    assert len(gate_report.all_model_results) == 5
+    # 2. Rule labeling proposal
+    labels = LabelingWorkflow.propose_rule_labels(features)
+    assert len(labels) == 20
+    assert all(l.reviewer_status == "UNREVIEWED" for l in labels)
 
-    majority_res = next(r for r in gate_report.all_model_results if r.model_name == "Majority Class Baseline")
-    rule_res = next(r for r in gate_report.all_model_results if r.model_name == "Rule-Based Baseline")
-    rf_res = next(r for r in gate_report.all_model_results if "Random Forest" in r.model_name)
+    # 3. Expert review and confirmation
+    label_map = {}
+    for i, l in enumerate(labels):
+        if i == 0:
+            reviewed = LabelingWorkflow.review_label(l, confirmed_label=BehaviorArchetype.SYSTEMATIC_VERIFIER)
+            assert reviewed.reviewer_status == "CONFIRMED"
+        elif i == 1:
+            reviewed = LabelingWorkflow.review_label(l, is_ambiguous=True)
+            assert reviewed.reviewer_status == "AMBIGUOUS"
+        else:
+            reviewed = l
+        label_map[l.session_id] = reviewed
 
-    assert majority_res.macro_f1 < rule_res.macro_f1
-    assert rf_res.macro_f1 > 0.70
-    assert len(gate_report.gate_justification) > 10
+    # 4. Tabular CSV and JSON Export (Zero raw code leakage)
+    json_out = DatasetExporter.export_json(features, label_map)
+    csv_out = DatasetExporter.export_csv(features, label_map)
+
+    assert "session_id" in json_out
+    assert "loc" in csv_out
+    assert "def " not in csv_out  # Zero raw code leakage

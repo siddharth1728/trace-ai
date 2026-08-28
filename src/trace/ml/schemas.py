@@ -34,6 +34,11 @@ class BehaviorArchetype(str, Enum):
     SYMPTOM_FIXATED = "SYMPTOM_FIXATED"
     BLIND_TRIAL = "BLIND_TRIAL"
 
+    # Compatibility aliases
+    SYSTEMATIC_VERIFICATION = "SYSTEMATIC_VERIFIER"
+    RAPID_TRIAL_AND_ERROR = "GUESS_AND_CHECK"
+    UNFOCUSED_EXPLORATION = "BLIND_TRIAL"
+
 
 class DataSourceType(str, Enum):
     """Explicit provenance marker distinguishing real user sessions from synthetic benchmark traces."""

@@ -113,6 +113,7 @@ class StudentHypothesisStatus(str, Enum):
 class StudentHypothesis(BaseModel):
     """A hypothesis formulated directly by the student."""
     id: str = Field(default_factory=lambda: f"shyp_{uuid.uuid4().hex[:8]}")
+    session_id: Optional[str] = None
     turn_number: int = 1
     hypothesis_text: str
     target_function_or_line: Optional[str] = None
@@ -125,7 +126,7 @@ class StudentHypothesis(BaseModel):
 class CodeRevision(BaseModel):
     """A distinct student code modification attempt within a session."""
     id: str = Field(default_factory=lambda: f"rev_{uuid.uuid4().hex[:8]}")
-    session_id: str
+    session_id: Optional[str] = None
     revision_number: int = 1
     source_code: str
     intent_notes: Optional[str] = None
@@ -146,7 +147,7 @@ class CodeRevision(BaseModel):
 class StudentTestInput(BaseModel):
     """A concrete function call or input vector proposed by the student."""
     id: str = Field(default_factory=lambda: f"stest_{uuid.uuid4().hex[:8]}")
-    session_id: str
+    session_id: Optional[str] = None
     turn_number: int = 1
     input_expression: str
     student_rationale: Optional[str] = None

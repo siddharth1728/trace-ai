@@ -29,7 +29,7 @@ def test_student_hypothesis_separation_from_agent_hypothesis():
     )
 
     assert isinstance(student_hyp, StudentHypothesis)
-    assert isinstance(agent_hyp, AgentHypothesis)
+    assert isinstance(agent_hyp, Hypothesis)
     assert student_hyp.status == StudentHypothesisStatus.UNTESTED
     assert student_hyp.hypothesis_text != agent_hyp.statement
 

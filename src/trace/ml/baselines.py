@@ -117,12 +117,12 @@ def compute_deterministic_habits(features_list: List[FeatureVector]) -> "Determi
 
     return DeterministicHabitStats(
         total_sessions=n,
-        ast_first_rate=round(ast_first_cnt / n, 2),
-        traceback_provided_rate=round(tb_cnt / n, 2),
-        countercheck_rigor_rate=round(cc_cnt / n, 2),
-        avg_investigation_steps=round(steps_sum / n, 2),
-        avg_hypotheses_per_session=round(hyp_sum / n, 2),
-        tool_failure_rate=round(tool_fail_sum / n, 2),
+        ast_first_rate=round((ast_first_cnt / n) * 100.0, 1),
+        traceback_provided_rate=round((tb_cnt / n) * 100.0, 1),
+        countercheck_rigor_rate=round((cc_cnt / n) * 100.0, 1),
+        avg_investigation_steps=round(steps_sum / n, 1),
+        avg_hypotheses_per_session=round(hyp_sum / n, 1),
+        tool_failure_rate=round((tool_fail_sum / n) * 100.0, 1),
     )
 
 
@@ -131,22 +131,22 @@ def generate_deterministic_strengths_and_growth(habits: "DeterministicHabitStats
     strengths: List[str] = []
     growth: List[str] = []
 
-    if habits.ast_first_rate >= 0.6:
+    if habits.ast_first_rate >= 60.0:
         strengths.append("Consistently begins investigation with static code structure analysis")
     else:
         growth.append("Consider reviewing abstract syntax trees before jumping to execution")
 
-    if habits.traceback_provided_rate >= 0.5:
+    if habits.traceback_provided_rate >= 50.0:
         strengths.append("Regularly provides contextual Python runtime tracebacks")
     else:
         growth.append("Providing complete error tracebacks improves debugging speed and accuracy")
 
-    if habits.countercheck_rigor_rate >= 0.4:
+    if habits.countercheck_rigor_rate >= 40.0:
         strengths.append("High verification rigor with targeted countercheck disproof attempts")
     else:
         growth.append("Practice testing hypotheses with deliberate counterexample inputs")
 
-    if habits.tool_failure_rate <= 0.2:
+    if habits.tool_failure_rate <= 20.0:
         strengths.append("Reliable and disciplined tool usage during investigations")
     else:
         growth.append("High tool error rate suggests unfocused or speculative testing")
