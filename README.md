@@ -1,85 +1,114 @@
-# TRACE
+<div align="center">
 
-> **Understand your bugs. Understand how you debug.**
+# 🛡️ TRACE
+
+### *Understand your bugs. Understand how you debug.*
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18.0-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![SQLite](https://img.shields.io/badge/SQLite-SQLAlchemy_2.0-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://sqlite.org)
+[![Tests](https://img.shields.io/badge/Tests-75%2F75_Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](file:///c:/TRACE/docs/audit_report.md)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
+
+<br />
+
+**TRACE is an evidence-driven AI debugging investigation system for Python students.**  
+It treats code errors as scientific inquiries—gathering empirical observations, testing competing hypotheses, executing sandboxed counterexamples, and enforcing a **$0\%$ unsupported claim policy**.
+
+</div>
 
 ---
 
-## What is TRACE?
+## 💡 Overview
 
-TRACE is an evidence-driven AI debugging investigation product for Python students. Instead of generating unverified code replacements, TRACE conducts an empirical, hypothesis-driven scientific investigation grounded in static AST analysis, sandboxed execution, atomic evidence extraction, counterexample disproof testing, and 100% grounded diagnoses.
+Most AI coding assistants act as **code generators**: a student pastes a broken program, and the AI returns a block of replacement code. This approach has two fundamental flaws:
+1. **No Student Learning**: The student copies the snippet without understanding Python's execution model or why the bug occurred.
+2. **AI Speculation & Hallucination**: Generic LLMs guess errors without executing the code or checking real stack traces.
 
----
-
-## The Problem
-
-Most AI coding assistants act as code generators. When a student pastes a broken Python script, the AI returns a block of replacement code without verifying if the code actually fails or explaining why it broke. This creates two major issues:
-1. **No Student Learning**: The student copies the fix without understanding Python's execution model or how to debug.
-2. **AI Speculation & Hallucination**: LLMs frequently guess root causes without executing the code or verifying stack traces.
-
----
-
-## What Makes TRACE Different?
+**TRACE changes the paradigm.** It decouples *language reasoning* from *empirical verification*:
 
 ```text
 Traditional AI Assistant:
-  Problem ─────────────────────────────────────────────► Replacement Code (Unverified)
+  User Bug ──────────────────────────────────────────────────────────► Unverified Code Fix
 
-TRACE Evidence Engine:
-  Problem ──► Plan ──► Investigate ──► Hypotheses ──► Evidence ──► Countercheck ──► Verification ──► Grounded Diagnosis
+TRACE Evidence-Driven Investigation Engine:
+  User Bug ──► Plan ──► AST & Sandbox Tools ──► Evidence Store ──► Countercheck Disproof ──► Grounded Diagnosis
 ```
 
 ---
 
-## Key Capabilities
+## ✨ Key Capabilities
 
-* 🔬 **Deterministic Evidence Engine**: Gathers empirical facts via AST static analysis, traceback parsing, and isolated subprocess runs.
-* ⚔️ **Counterexample Disproof Engine**: Generates targeted sandbox test harnesses to actively challenge and attempt to *disprove* leading hypotheses before making a diagnosis.
-* 🤝 **Interactive Collaborative Mode**: Enables students to articulate bug theories, execute custom sandbox test cases, and track code revision iterations.
-* 💬 **Socratic Debugging Inquiries**: Guides student understanding with targeted reflection questions and a seamless *"Let TRACE Take Over"* mode handoff.
-* 📊 **100% Deterministic Habit Analytics**: Computes factual habit stats (static inspection rate, traceback framing, countercheck rigor) with zero synthetic ML hallucinations.
-* 🔒 **4-Namespace Telemetry Isolation**: Segregates student actions, agent actions, problem context, and code properties with full privacy opt-out controls and CLI export tools (`trace export telemetry`).
+<table>
+  <tr>
+    <td width="50%">
+      <h3>🔬 Empirical Evidence Engine</h3>
+      <p>Collects atomic, verifiable facts using AST static analysis, stack trace normalization, and isolated subprocess execution. Distinguishes <b>DIRECT</b> empirical facts from <b>DERIVED</b> inferences.</p>
+    </td>
+    <td width="50%">
+      <h3>⚔️ Counterexample Disproof</h3>
+      <p>Before confirming a diagnosis, TRACE constructs an isolated test harness to actively attempt to <b>disprove</b> its leading hypothesis. If disproven, it pivots to re-investigate alternative causes.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3>🤝 Interactive Socratic Studio</h3>
+      <p>Collaborative debugging mode where students articulate hypotheses, run custom sandbox test cases, and submit code revisions while TRACE tracks structural AST diffs (<code>+lines</code>, <code>-lines</code>, <code>CC Δ</code>).</p>
+    </td>
+    <td width="50%">
+      <h3>📊 100% Factual Habit Analytics</h3>
+      <p>Tracks observable debugging habits (static inspection rates, traceback framing, countercheck rigor) with zero synthetic ML hallucinations or fake student personality archetypes.</p>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## System Architecture
+## 🏗️ Architecture & Data Flow
 
-```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           User / Web Browser                            │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│             React 18 + TypeScript + Vite + Tailwind CSS UI              │
-│     [Code Pane]     [Investigation Pipeline]     [Diagnosis Studio]     │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ (REST API & Real-Time SSE Stream)
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    FastAPI Backend & Session Service                    │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     Investigation Orchestrator                          │
-│   ├── State Machine      ├── Evidence Engine (DIRECT vs DERIVED)        │
-│   ├── Planner            ├── Verifier & Claim Validator (0% unbacked)   │
-│   └── Hypotheses Board   └── Counterexample Disproof Engine             │
-└──────────────────┬───────────────────────────────────┬──────────────────┘
-                   │                                   │
-                   ▼                                   ▼
-┌──────────────────────────────────────┐  ┌───────────────────────────────┐
-│      Deterministic Tool Suite        │  │   Async SQLite Persistence    │
-│  • AST Analyzer   • Subprocess Sandbox│  │      (SQLAlchemy 2.0 ORM)     │
-│  • Traceback Parse• Path-Jailed Reader│  │  Sessions, Evidence, Telemetry│
-└──────────────────────────────────────┘  └───────────────────────────────┘
+TRACE combines an async Python/FastAPI orchestrator with a real-time React web studio:
+
+```mermaid
+graph TD
+    User([Student / Developer]) -->|Interact| UI[React 18 + TypeScript + Vite UI]
+    UI -->|HTTP REST / SSE Stream| API[FastAPI Session Routes]
+    API -->|Manage Lifecycle| Orch[Investigation Orchestrator]
+    
+    subgraph Agent Core
+        Orch --> Plan[Planner]
+        Orch --> Hyp[Hypotheses Board]
+        Orch --> EvEngine[Evidence Engine]
+        Orch --> Verifier[Calibrated Verifier]
+        Orch --> CounterEngine[Counterexample Disproof Engine]
+        Orch --> Validator[Claim Validator]
+    end
+
+    subgraph Tool Suite & Storage
+        EvEngine --> Tools[AST Analyzer / Executor Sandbox / Traceback Parser]
+        Orch --> DB[(SQLite + SQLAlchemy 2.0 Async ORM)]
+    end
+    
+    Verifier -->|Grounded Diagnosis| UI
 ```
 
 ---
 
-## Example Investigation
+## 🌟 Guided vs. Interactive Modes
 
-Given a Python script with an error:
+| Mode | Target User Workflow | Primary Objective |
+| :--- | :--- | :--- |
+| **🚀 Guided Mode (Automated)** | TRACE plans investigation steps, runs tools, evaluates evidence, executes counterchecks, and delivers a verified diagnosis automatically. | Rapid, zero-hallucination root-cause analysis. |
+| **🤝 Interactive Mode (Collaborative)** | TRACE pauses for student input. Students formulate bug theories, run custom sandbox test cases, and submit code revisions while TRACE poses Socratic reflection questions. | Active student learning, mental model testing, and collaborative debugging. |
+
+> **Seamless Handoff**: Interactive Mode includes a **"Let TRACE Take Over"** button to hand off the remaining investigation to Guided Mode at any time.
+
+---
+
+## 🔍 Example Investigation & Countercheck Proof
+
+Given a Python script containing a missing dictionary key:
 ```python
 def get_user_profile(user_db, user_id):
     user = user_db.get(user_id)
@@ -89,120 +118,124 @@ database = {1: {"name": "Alice"}, 2: {}}
 print(get_user_profile(database, 2))
 ```
 
-1. **AST & Sandbox Run**: TRACE executes the script in the sandbox, capturing `AttributeError: 'NoneType' object has no attribute 'upper'`.
-2. **Evidence Extraction**: Extracts direct evidence showing `user.get("name")` evaluates to `None` for user `2`.
-3. **Counterexample Disproof**: Runs a test harness passing dictionary entries with missing keys to confirm the disproof boundary.
-4. **Grounded Diagnosis**: Reports `VERIFIED ROOT CAUSE` (100% confidence) with conceptual fix guidance explaining dictionary `.get()` defaults.
+```text
+[STEP 1] Static AST Analysis ─────► Detects dictionary lookup and .upper() call on line 3.
+[STEP 2] Sandbox Execution   ─────► Captures AttributeError: 'NoneType' object has no attribute 'upper'.
+[STEP 3] Hypothesis Proposed ─────► H1: user.get("name") returns None for missing key in dict.
+[STEP 4] Countercheck Test   ─────► Constructs test harness with empty dict. Executes in sandbox.
+[STEP 5] Falsification Check ─────► H1 passes disproof test. Status updated to VERIFIED.
+[DIAGNOSIS] ──────────────────────► VERIFIED ROOT CAUSE (100% Calibrated Confidence)
+```
 
 ---
 
-## Guided vs. Interactive Modes
+## 📊 Evaluation & Verification Metrics
 
-* **Guided Mode (Automated)**: TRACE autonomously plans steps, runs tools, tests hypotheses, and produces a verified diagnosis. Ideal for rapid root-cause analysis.
-* **Interactive Mode (Collaborative)**: Pauses for student input. Students formulate bug hypotheses, run custom sandbox test cases, and submit code revisions while TRACE tracks structural AST diffs (`+lines`, `-lines`, `CC Δ`). Includes a *"Let TRACE Take Over"* button to return to Guided mode anytime.
+TRACE is evaluated against a **16-case benchmark suite** covering syntax errors, runtime exceptions, type mismatches, logic bugs, boundary conditions, scoping errors, and misleading symptoms:
 
----
-
-## Safety Boundary Notice
-
-> **Note**: Subprocess sandboxing in TRACE is designed as a **development and student safety boundary** (enforcing a 5.0s timeout, 10 KB output truncation cap, workspace directory path containment, and environment variable secret scrubbing). It is not an enterprise-grade multi-tenant isolated container runtime (such as Docker or gVisor).
-
----
-
-## Evaluation & Test Metrics
-
-TRACE is evaluated against a 16-case benchmark suite and 75 automated tests:
-
-| Evaluation Metric | Target | Verified Result |
-| :--- | :---: | :---: |
-| **Evidence Grounding Rate ($EGR$)** | $100\%$ | **100.0%** |
-| **Unsupported Claim Rate ($UCR$)** | $0\%$ | **0.0%** |
-| **Hypothesis Verification Accuracy ($HVA$)** | $\ge 90\%$ | **100.0%** |
-| **Counterexample Success Rate ($CSR$)** | $\ge 80\%$ | **100.0%** |
-| **Automated Test Pass Rate** | $100\%$ | **75 / 75 Passed (100%)** |
-| **Frontend TypeScript Check** | 0 Errors | **0 Errors** |
+| Metric / Benchmark Dimension | Target | Verified Result | Status |
+| :--- | :---: | :---: | :---: |
+| **Evidence Grounding Rate ($EGR$)** | $100\%$ | **100.0%** | **VERIFIED** |
+| **Unsupported Claim Rate ($UCR$)** | $0\%$ | **0.0%** | **VERIFIED** |
+| **Hypothesis Verification Accuracy ($HVA$)** | $\ge 90\%$ | **100.0%** | **VERIFIED** |
+| **Counterexample Disproof Success Rate ($CSR$)** | $\ge 80\%$ | **100.0%** | **VERIFIED** |
+| **Backend Test Suite Pass Rate** | $100\%$ | **75 / 75 Passed** | **VERIFIED** |
+| **Frontend TypeScript Check (`npx tsc`)** | 0 Errors | **0 Errors** | **VERIFIED** |
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
-* **Core Agent & Backend**: Python 3.10+, FastAPI, AsyncIO, Typer CLI
-* **Persistence & Database**: SQLite, SQLAlchemy 2.0 Async ORM, aiosqlite
-* **Real-Time Streaming**: Server-Sent Events (SSE) via sse-starlette
-* **Frontend UI Studio**: React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
-* **LLM Abstraction**: Vendor-neutral provider protocol with 100% offline `MockLLMProvider` and `OpenAICompatibleProvider`
+- **Backend Architecture**: Python 3.10+, FastAPI, AsyncIO, Typer CLI, Pydantic v2
+- **Persistence & Database**: SQLite, SQLAlchemy 2.0 Async ORM, aiosqlite
+- **Real-Time Streaming**: Server-Sent Events (SSE) via `sse-starlette`
+- **Frontend Studio**: React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
+- **LLM Abstraction**: Vendor-neutral provider protocol (`MockLLMProvider` for 100% offline tests, `OpenAICompatibleProvider` for live models)
 
 ---
 
-## Project Structure
+## 📁 Repository Structure
 
 ```text
 trace-ai/
-├── docs/                     # Technical specifications & interview guides
-│   ├── audit_report.md       # Final product audit & evaluation results
+├── docs/                     # Technical architecture & engineering documents
+│   ├── audit_report.md       # Final product evaluation report
 │   ├── demo_cases.md         # 3 canonical reproducible demo cases
 │   ├── demo_script.md        # 3-5 minute live demonstration script
-│   ├── interview_qa.md       # 15 technical interview questions & architecture Q&A
+│   ├── interview_qa.md       # 15 technical interview architecture Q&A
 │   ├── project_metrics.md    # Recorded performance measurements & test counts
-│   ├── resume_bullets.md     # Resume bullet points & verbal summaries
+│   ├── resume_bullets.md     # Resume bullet points & verbal screen summary
 │   ├── setup.md              # Environment setup & installation guide
 │   ├── story.md              # The engineering story behind TRACE
-│   └── telemetry.md          # 4 telemetry namespaces & 18-feature vector spec
-├── frontend/                 # React 18 + Vite + TypeScript studio
-│   ├── src/components/       # CodePane, Pipeline, Diagnosis, Timeline
+│   └── telemetry.md          # 4 telemetry namespaces & 18-feature process vector
+├── frontend/                 # React 18 + Vite + TypeScript web studio
+│   ├── src/components/       # CodePane, Pipeline, DiagnosisPane, InteractionTimeline
 │   ├── src/pages/            # InvestigatePage, HistoryPage, ProfilePage, SettingsPage
-│   └── src/api/              # Typed fetch API & SSE hooks
+│   └── src/api/              # Typed fetch API & SSE stream hooks
 ├── src/trace/                # Core Python package
-│   ├── agent/                # Orchestrator, Planner, Verifier, Counterexample
-│   ├── api/                  # FastAPI routes (sessions, profile, sse)
+│   ├── agent/                # Orchestrator, Planner, Verifier, Counterexample Engine
+│   ├── api/                  # FastAPI REST routes (sessions, profile, SSE)
 │   ├── cli/                  # Typer CLI (investigate, export)
 │   ├── core/                 # State machine, Evidence Engine, Claim Validator
-│   ├── db/                   # SQLAlchemy models, repository, sessions
-│   └── tools/                # AST analyzer, Python executor, Traceback parser
+│   ├── db/                   # SQLAlchemy 2.0 ORM models, repository, sessions
+│   └── tools/                # AST analyzer, Python executor sandbox, Traceback parser
 ├── tests/                    # Unit, integration, and E2E benchmark suites
-└── .env.example              # Placeholder environment variables
+├── .env.example              # Placeholder environment configuration
+└── CONTRIBUTING.md           # Engineering development standards
 ```
 
 ---
 
-## Running Locally
+## ⚡ Quickstart
 
+### 1. Prerequisites
+- Python 3.10+
+- Node.js 18+ and npm
+
+### 2. Backend Setup
 ```bash
-# 1. Install backend package in editable mode
+# Clone the repository
+git clone https://github.com/siddharth1728/trace-ai.git
+cd trace-ai
+
+# Install Python package in editable mode
 pip install -e .
 
-# 2. Run backend API server
+# Start FastAPI API server (Port 8000)
 python -m trace.api.main
+```
 
-# 3. Start frontend dev server
+### 3. Frontend Web Studio Setup
+```bash
+# In a new terminal tab
 cd frontend
 npm install
 npm run dev
+```
+Open **`http://localhost:5173`** in your browser.
 
-# 4. Run automated test suite
-python -m pytest -v tests/
+### 4. Run CLI Investigation (Offline / Mock Mode)
+```bash
+python -m trace.cli.main investigate tests/e2e/fixtures/bug_type_error.py --goal "Fix AttributeError when username is None" --provider mock
+```
+
+### 5. Export Telemetry Datasets
+```bash
+# Export anonymized telemetry features to JSON or CSV
+python -m trace.cli.main export telemetry --output dataset.json --format json
+python -m trace.cli.main export dataset-report --output quality_report.md
 ```
 
 ---
 
-## Current Limitations
+## 🛡️ Security Boundary & Current Limitations
 
-1. **Python Scope**: Focused exclusively on Python 3.10+ code debugging.
-2. **Single-Process Subprocess Isolation**: Uses OS subprocess limits rather than containerized micro-sandboxes.
-3. **Lightweight Project Scope**: Optimized for single-file and small-package debugging rather than multi-gigabyte repositories.
-
----
-
-## Future Work & Why Machine Learning Was Postponed
-
-During development, an initial machine learning model (Random Forest) was trained on synthetic data to predict student behavior patterns. An engineering audit revealed that **training ML models on synthetic student data produces meaningless predictions**.
-
-In accordance with rigorous data science ethics, the synthetic ML model was **deliberately torn down** and replaced with a **100% Deterministic Habit Profiler** based on factual, observable stats.
-
-Future ML classification work is planned as a research phase **only after sufficient real student interaction datasets are collected** using the built-in `trace export telemetry` CLI tools.
+1. **Subprocess Isolation**: Subprocess sandboxing enforces a **5.0-second timeout guard**, **10 KB output truncation cap**, **workspace directory path jail**, and **environment variable secret scrubbing**. It is designed as a student safety boundary, not an enterprise multi-tenant container runtime (such as Docker or gVisor).
+2. **Language Scope**: Currently optimized for Python 3.10+ code debugging.
+3. **Future Machine Learning**: During early development, a synthetic Random Forest classifier was prototyped. An engineering audit revealed that **training ML on synthetic student data produces invalid predictions**. TRACE deliberately replaced synthetic ML with **100% Deterministic Habit Analytics**. Real ML classification is planned only after collecting genuine student interaction datasets via `trace export telemetry`.
 
 ---
 
-## License
+## 📜 License
 
-Apache 2.0
+Distributed under the **Apache 2.0 License**. See `LICENSE` for more information.
