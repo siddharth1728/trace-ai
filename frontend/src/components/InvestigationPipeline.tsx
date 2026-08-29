@@ -19,6 +19,7 @@ import {
   FastForward,
 } from 'lucide-react';
 import {
+  CodeRevision,
   Countercheck,
   Evidence,
   Hypothesis,
@@ -31,6 +32,7 @@ import {
   StudentHypothesis,
   StudentTestInput,
 } from '../types';
+import { InteractionTimeline } from './InteractionTimeline';
 
 interface InvestigationPipelineProps {
   status: SessionStatus;
@@ -44,6 +46,7 @@ interface InvestigationPipelineProps {
   mode?: InvestigationMode;
   studentHypotheses?: StudentHypothesis[];
   studentTestInputs?: StudentTestInput[];
+  revisions?: CodeRevision[];
   activeSocraticPrompt?: SocraticPrompt | null;
   studentActivity?: StudentActivitySummary | null;
   onSubmitStudentHypothesis?: (hypothesis: string, targetLine?: string, confidence?: number) => void;
@@ -63,6 +66,7 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
   mode = 'GUIDED',
   studentHypotheses = [],
   studentTestInputs = [],
+  revisions = [],
   activeSocraticPrompt = null,
   studentActivity = null,
   onSubmitStudentHypothesis,
@@ -235,7 +239,7 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-yellow-400" />
-          <span>Hypotheses ({hypotheses.length + studentHypotheses.length})</span>
+          <span>Possible Causes ({hypotheses.length + studentHypotheses.length})</span>
         </button>
         <button
           onClick={() => setActiveTab('interactive')}
@@ -246,7 +250,7 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
           }`}
         >
           <UserCheck className="w-3.5 h-3.5" />
-          <span>Student Actions ({studentHypotheses.length + studentTestInputs.length})</span>
+          <span>Your Actions ({studentHypotheses.length + studentTestInputs.length})</span>
         </button>
         <button
           onClick={() => setActiveTab('evidence')}
@@ -257,7 +261,7 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
           }`}
         >
           <Eye className="w-3.5 h-3.5 text-blue-400" />
-          <span>Evidence ({evidence.length})</span>
+          <span>Why TRACE Believes This ({evidence.length})</span>
         </button>
         <button
           onClick={() => setActiveTab('countercheck')}
@@ -268,7 +272,7 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
           }`}
         >
           <FlaskConical className="w-3.5 h-3.5 text-purple-400" />
-          <span>Countercheck ({counterchecks.length})</span>
+          <span>TRACE Tested Its Conclusion ({counterchecks.length})</span>
         </button>
       </div>
 
@@ -710,47 +714,15 @@ export const InvestigationPipeline: React.FC<InvestigationPipelineProps> = ({
               </button>
             </form>
 
-            {/* Test Execution History */}
-            {studentTestInputs.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-surfaceBorder">
-                <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                  Student Test History ({studentTestInputs.length})
-                </span>
-                <div className="space-y-2">
-                  {studentTestInputs.map((test) => (
-                    <div
-                      key={test.id}
-                      className="p-3 bg-background border border-surfaceBorder rounded-lg text-xs space-y-1.5"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-[11px] text-purple-300 font-bold">
-                          {test.input_expression}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                            test.execution_success
-                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                              : 'bg-red-950 text-red-400 border border-red-800'
-                          }`}
-                        >
-                          {test.execution_success ? 'PASSED' : test.exception_type || 'FAILED'}
-                        </span>
-                      </div>
-                      {test.stdout && (
-                        <div className="text-[10px] font-mono text-gray-300 bg-surface/60 p-1.5 rounded">
-                          stdout: {test.stdout}
-                        </div>
-                      )}
-                      {test.stderr && (
-                        <div className="text-[10px] font-mono text-red-300 bg-red-950/40 p-1.5 rounded">
-                          stderr: {test.stderr}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Collaborative Turn Interaction Timeline */}
+            <div className="pt-2 border-t border-surfaceBorder">
+              <InteractionTimeline
+                studentHypotheses={studentHypotheses}
+                studentTestInputs={studentTestInputs}
+                revisions={revisions}
+                activeSocraticPrompt={activeSocraticPrompt}
+              />
+            </div>
           </div>
         )}
 

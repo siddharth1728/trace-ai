@@ -3,8 +3,8 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 
 interface AppLayoutProps {
-  currentTab: 'investigate' | 'history' | 'profile';
-  onTabChange: (tab: 'investigate' | 'history' | 'profile') => void;
+  currentTab: 'investigate' | 'history' | 'profile' | 'settings';
+  onTabChange: (tab: 'investigate' | 'history' | 'profile' | 'settings') => void;
   children: React.ReactNode;
 }
 

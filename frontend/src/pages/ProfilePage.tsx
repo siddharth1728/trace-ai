@@ -3,13 +3,9 @@ import {
   Brain,
   CheckCircle2,
   AlertTriangle,
-  Lightbulb,
   Scale,
-  Sparkles,
   TrendingUp,
   RotateCcw,
-  Zap,
-  Activity,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { StudentProfile } from '../types';
@@ -62,43 +58,6 @@ export const ProfilePage: React.FC = () => {
   }
 
   const habits = profile?.deterministic_habits;
-  const pred = profile?.latest_prediction;
-
-  const getArchetypeDisplay = (archetype?: string) => {
-    switch (archetype) {
-      case 'SYSTEMATIC_VERIFICATION':
-        return {
-          title: 'Systematic Verification',
-          badge: 'bg-emerald-950 text-emerald-300 border-emerald-500/60',
-          desc: 'High static analysis, explicit traceback inspection, and consistent countercheck disproof testing before confirming root causes.',
-          icon: <CheckCircle2 className="w-5 h-5 text-emerald-400" />,
-        };
-      case 'RAPID_TRIAL_AND_ERROR':
-        return {
-          title: 'Rapid Trial-and-Error (Guess-and-Check)',
-          badge: 'bg-yellow-950 text-yellow-300 border-yellow-500/60',
-          desc: 'Frequent execution before static AST structure inspection, high hypothesis churn, and missing disproof experiments.',
-          icon: <Zap className="w-5 h-5 text-yellow-400" />,
-        };
-      case 'UNFOCUSED_EXPLORATION':
-        return {
-          title: 'Unfocused Exploration',
-          badge: 'bg-purple-950 text-purple-300 border-purple-500/60',
-          desc: 'Higher tool error rate, frequent replanning, or difficulty isolating the failing stack frame.',
-          icon: <Brain className="w-5 h-5 text-purple-400" />,
-        };
-      default:
-        return {
-          title: 'Awaiting Sufficient Telemetry',
-          badge: 'bg-surfaceBorder text-gray-400',
-          desc: 'Complete investigations in the Studio to establish your baseline debugging behavioral pattern.',
-          icon: <Activity className="w-5 h-5 text-gray-400" />,
-        };
-    }
-  };
-
-  const archDisplay = getArchetypeDisplay(pred?.predicted_archetype);
-
   return (
     <div className="space-y-6">
       {/* Page Title & Refresh */}
@@ -121,10 +80,10 @@ export const ProfilePage: React.FC = () => {
         </button>
       </div>
 
-      {/* Top Grid: Deterministic Habits vs AI-Detected Pattern */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Deterministic Debugging Habits (7 cols) */}
-        <div className="lg:col-span-7 bg-surface border border-surfaceBorder rounded-xl p-5 space-y-5">
+      {/* Top Grid: Deterministic Habits */}
+      <div className="grid grid-cols-1 gap-6 items-start">
+        {/* Left: Deterministic Debugging Habits (12 cols) */}
+        <div className="bg-surface border border-surfaceBorder rounded-xl p-5 space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-surfaceBorder">
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-emerald-400" />
@@ -204,72 +163,6 @@ export const ProfilePage: React.FC = () => {
               <div className="text-[10px] text-gray-400 mt-0.5">Tool Error Rate</div>
             </div>
           </div>
-        </div>
-
-        {/* Right: AI-Detected Pattern (5 cols) */}
-        <div className="lg:col-span-5 bg-surface border border-surfaceBorder rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-surfaceBorder">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-yellow-400" />
-              <h3 className="font-semibold text-sm text-white">AI-Detected Behavior Pattern</h3>
-            </div>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-800">
-              {pred?.model_type || 'RandomForest'}
-            </span>
-          </div>
-
-          {/* Archetype Card */}
-          <div className="p-4 bg-background border border-surfaceBorder rounded-xl space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {archDisplay.icon}
-                <span className="text-xs font-bold text-white">{archDisplay.title}</span>
-              </div>
-              {pred && (
-                <span className="text-xs font-mono font-bold text-emerald-400">
-                  {Math.round(pred.confidence * 100)}% conf
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-gray-400 leading-relaxed">{archDisplay.desc}</p>
-          </div>
-
-          {/* Contributing Factors */}
-          {pred?.top_contributing_factors && pred.top_contributing_factors.length > 0 && (
-            <div className="space-y-2">
-              <span className="text-[10px] font-mono font-semibold text-gray-400 uppercase tracking-wider">
-                Contributing Telemetry Signals
-              </span>
-              <div className="space-y-1.5">
-                {pred.top_contributing_factors.map((factor, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2 bg-background/60 border border-surfaceBorder/60 rounded-lg text-[11px] flex items-start gap-2 text-gray-300"
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${
-                        factor.contribution_weight >= 0 ? 'bg-emerald-400' : 'bg-red-400'
-                      }`}
-                    ></span>
-                    <span>{factor.description}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Pedagogical Explanation */}
-          {pred?.pedagogical_explanation && (
-            <div className="p-3 bg-blue-950/20 border border-blue-800/40 rounded-xl space-y-1 text-xs">
-              <span className="text-[10px] font-mono text-blue-400 font-bold flex items-center gap-1.5 uppercase">
-                <Lightbulb className="w-3.5 h-3.5" />
-                Pedagogical Analysis
-              </span>
-              <p className="text-gray-300 text-[11px] leading-relaxed">
-                {pred.pedagogical_explanation}
-              </p>
-            </div>
-          )}
         </div>
       </div>
 

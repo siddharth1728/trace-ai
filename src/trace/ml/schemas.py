@@ -311,42 +311,6 @@ class FeatureVector(BaseModel):
         }
 
 
-class BehaviorLabelRecord(BaseModel):
-    """Label record supporting rule-assisted proposals, expert confirmation, and ambiguous states."""
-    session_id: str
-    proposed_label: Optional[BehaviorArchetype] = None
-    final_label: Optional[BehaviorArchetype] = None
-    labeling_method: Literal["RULE_ASSISTED", "MANUAL_EXPERT", "CONSENSUS_AUDIT", "UNLABELED"] = "UNLABELED"
-    reviewer_status: Literal["UNREVIEWED", "CONFIRMED", "OVERRIDDEN", "AMBIGUOUS"] = "UNREVIEWED"
-    reviewer_notes: Optional[str] = None
-    confidence: float = 1.0
-    dataset_version: str = "v0.4-A"
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
-# Compatibility Aliases and Profile DTOs
-TelemetryFeatures = FeatureVector
-
-
-class FeatureContribution(BaseModel):
-    feature_name: str
-    feature_value: float
-    contribution_weight: float
-    description: str
-
-
-class BehaviorPrediction(BaseModel):
-    session_id: str
-    predicted_archetype: str
-    confidence: float
-    top_contributing_factors: List[FeatureContribution] = Field(default_factory=list)
-    pedagogical_explanation: str = ""
-    model_type: str = "RandomForest"
-    model_version: str = "v0.4"
-    created_at: str = ""
-
-
 class DeterministicHabitStats(BaseModel):
     total_sessions: int = 0
     ast_first_rate: float = 0.0
@@ -357,10 +321,11 @@ class DeterministicHabitStats(BaseModel):
     tool_failure_rate: float = 0.0
 
 
+# Compatibility Aliases and Profile DTOs
+TelemetryFeatures = FeatureVector
+
 class StudentProfile(BaseModel):
     deterministic_habits: DeterministicHabitStats = Field(default_factory=DeterministicHabitStats)
-    latest_prediction: Optional[BehaviorPrediction] = None
-    archetype_history: Dict[str, int] = Field(default_factory=dict)
     key_strengths: List[str] = Field(default_factory=list)
     growth_areas: List[str] = Field(default_factory=list)
     updated_at: str = ""

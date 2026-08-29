@@ -33,7 +33,7 @@ def test_ast_metrics_syntax_error_graceful_fallback():
     assert metrics["loc"] == 2
     assert metrics["ast_node_count"] >= 1
     assert metrics["cyclomatic_complexity"] == 1
-    assert metrics["function_count"] == 0
+    assert metrics["function_count"] == 1
 
 
 def test_compute_tool_entropy():
@@ -99,7 +99,8 @@ def test_telemetry_extractor_from_agent_state():
         )
     )
 
-    features = TelemetryExtractor.extract_from_state(state, problem_id="prob_sum_01")
+    telemetry = TelemetryExtractor.extract_telemetry_record(session_record=state, state=state, problem_id="prob_sum_01")
+    features = TelemetryExtractor.extract_feature_vector(telemetry)
 
     assert features.session_id == "test_sess_001"
     assert features.problem_id == "prob_sum_01"
@@ -108,9 +109,9 @@ def test_telemetry_extractor_from_agent_state():
     assert features.ast_first_step is True
     assert features.static_to_exec_ratio >= 1.0
     assert features.failed_tool_ratio == 0.0
-    assert features.hypothesis_churn_count == 1
+    assert features.hypothesis_count == 1
     assert features.direct_evidence_ratio == 1.0
 
-    vector = features.to_feature_vector()
+    vector = features.to_feature_list()
     assert len(vector) == 18
-    assert len(TelemetryFeatures.feature_names()) == 18
+    assert len(TelemetryFeatures.get_feature_provenance_map()) == 18

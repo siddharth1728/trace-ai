@@ -50,9 +50,11 @@ class TelemetryExtractor:
             else getattr(session_record, "file_path", None)
             or (getattr(session_record, "title", "default")[:30])
         )
+        
+        session_id_val = str(getattr(session_record, "id", getattr(session_record, "session_id", "unknown")))
 
         return TelemetryRecord(
-            session_id=str(getattr(session_record, "id", "unknown")),
+            session_id=session_id_val,
             data_source=data_source,
             problem_id=resolved_problem_id,
             user_actions=user_actions,
@@ -240,8 +242,8 @@ class TelemetryExtractor:
         executed_cc = sum(1 for c in counterchecks if getattr(c, "executed", False))
         cc_rate = round(executed_cc / hyp_count, 3) if hyp_count > 0 else 0.0
 
-        direct_ev = sum(1 for e in evidence_list if str(getattr(e, "evidence_type", "")).upper() == "DIRECT")
-        derived_ev = sum(1 for e in evidence_list if str(getattr(e, "evidence_type", "")).upper() == "DERIVED")
+        direct_ev = sum(1 for e in evidence_list if "DIRECT" in str(getattr(e, "evidence_type", "")).upper())
+        derived_ev = sum(1 for e in evidence_list if "DERIVED" in str(getattr(e, "evidence_type", "")).upper())
         total_ev = len(evidence_list)
         direct_ratio = round(direct_ev / total_ev, 3) if total_ev > 0 else 0.0
 

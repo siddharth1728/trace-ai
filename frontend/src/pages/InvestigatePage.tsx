@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { AlertCircle, RotateCcw } from 'lucide-react';
+import { AlertCircle, RotateCcw, Sparkles } from 'lucide-react';
 import { CodePane } from '../components/CodePane';
 import { InvestigationPipeline } from '../components/InvestigationPipeline';
 import { DiagnosisPane } from '../components/DiagnosisPane';
-import { Header } from '../components/Header';
 import { useInvestigationStream } from '../hooks/useInvestigationStream';
 import { api } from '../api/client';
 import {
@@ -130,6 +129,16 @@ print(get_user_profile(database, 2))`
     }
   };
 
+  const handleTakeOver = async () => {
+    if (!activeSessionId) return;
+    setMode('GUIDED');
+    try {
+      await api.startInvestigation(activeSessionId, { provider: 'mock', max_iterations: 8 });
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to hand off investigation to TRACE.');
+    }
+  };
+
   const handleSelectRevision = (revNum: number) => {
     setActiveRevisionNumber(revNum);
     const target = revisions.find((r) => r.revision_number === revNum);
@@ -220,8 +229,6 @@ print(get_user_profile(database, 2))`
 
   return (
     <div className="space-y-4">
-      <Header />
-
       {/* Error Alert */}
       {errorMessage && (
         <div className="p-3 bg-red-950/80 border border-red-700/80 rounded-xl flex items-center justify-between text-xs text-red-200">
@@ -248,14 +255,26 @@ print(get_user_profile(database, 2))`
               {mode} MODE
             </span>
           </div>
-          <button
-            onClick={handleResetSession}
-            disabled={isInvestigating}
-            className="flex items-center gap-1.5 text-gray-400 hover:text-white text-xs transition-colors disabled:opacity-40"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            New Investigation
-          </button>
+          <div className="flex items-center gap-2.5">
+            {mode === 'INTERACTIVE' && (
+              <button
+                onClick={handleTakeOver}
+                disabled={isInvestigating}
+                className="flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-medium transition-colors disabled:opacity-40 shadow-sm"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                Let TRACE Take Over (Guided)
+              </button>
+            )}
+            <button
+              onClick={handleResetSession}
+              disabled={isInvestigating}
+              className="flex items-center gap-1.5 text-gray-400 hover:text-white text-xs transition-colors disabled:opacity-40"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              New Investigation
+            </button>
+          </div>
         </div>
       )}
 
@@ -309,6 +328,7 @@ print(get_user_profile(database, 2))`
             mode={mode}
             studentHypotheses={studentHypotheses}
             studentTestInputs={studentTestInputs}
+            revisions={revisions}
             activeSocraticPrompt={activeSocraticPrompt}
             onSubmitStudentHypothesis={handleSubmitStudentHypothesis}
             onSubmitStudentTestInput={handleSubmitStudentTestInput}

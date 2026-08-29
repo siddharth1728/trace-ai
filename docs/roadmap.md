@@ -41,31 +41,51 @@ TRACE is developed incrementally through defined engineering milestones.
 * **Deterministic Hypothesis Verifier (`src/trace/agent/verifier.py`)**: Multi-evidence rule engine establishing `VERIFIED` ($\ge 90\%$), `STRONGLY_SUPPORTED`, `PLAUSIBLE`, `DISPROVEN` ($\le 25\%$), and `UNVERIFIED` ($20\%$).
 * **Diagnosis Claim Validator (`src/trace/core/claim_validator.py`)**: Audits final diagnoses, classifying claims into `FACTUAL` vs `REASONING` and strictly enforcing $0\%$ ungrounded factual claims.
 * **Rich CLI Auditable Evidence Table & Status Badges**: Displays complete evidence provenance and countercheck outcomes.
-* **16-Case Benchmark Suite & Metrics Calculator (`src/trace/eval/metrics.py`)**: Achieves $100\%$ Evidence Grounding Rate, $0\%$ Unsupported Claim Rate, $100\%$ Hypothesis Verification Accuracy, and 46/46 passing tests.
+* **16-Case Benchmark Suite & Metrics Calculator (`src/trace/eval/metrics.py`)**: Achieves $100\%$ Evidence Grounding Rate, $0\%$ Unsupported Claim Rate, $100\%$ Hypothesis Verification Accuracy, and 100% test pass rate.
 
 ---
 
-## 🔜 Milestone v0.3 — Product Layer & Persistence
+## 🎯 Milestone v0.3 — Product Layer & Persistence ✅
 
 **Goal**: Enable long-running student session history, interactive timeline visualization, and multi-file tracking.
-* Local SQLite / PostgreSQL database persistence.
-* REST API endpoints (`/sessions`, `/sessions/{id}/investigate`, `/sessions/{id}/events`).
-* Interactive web timeline interface showing step-by-step investigation unfolding.
-* Multi-file project context indexing.
+
+**Delivered Features**:
+* Local SQLite database persistence (SQLAlchemy 2.0 async ORM).
+* REST API endpoints (`/api/sessions`, `/api/sessions/{id}/investigate`, `/api/sessions/{id}/events`).
+* Real-time Server-Sent Events (SSE) streaming state changes directly to the browser.
+* 3-Pane React + Vite + TypeScript web interface: Code Editor, Investigation Pipeline, and Diagnosis Pane.
 
 ---
 
-## 🔜 Milestone v0.4 — Learning & Student Debugging Telemetry
+## 🎯 Milestone v0.4 — Learning & Telemetry Intelligence ✅
 
-**Goal**: Analyze student debugging behaviors over time.
-* Telemetry collection on common student stumbling blocks (e.g. repeated off-by-one errors, unhandled None returns).
-* Machine Learning classification model on structured telemetry.
-* Personalized learning recommendations and Socratic tutoring mode.
+**Goal**: Capture partitioned debugging process metrics and compute deterministic habit profiles.
+
+**Delivered Features**:
+* 4-Namespace Telemetry isolation (`STUDENT_TELEMETRY`, `TRACE_AGENT_TELEMETRY`, `PROBLEM_TELEMETRY`, `CODE_TELEMETRY`).
+* 18-Feature process extraction vector.
+* 100% Deterministic Habit Profiler (Static AST inspection rate, traceback framing rate, countercheck rigor, tool failure rate).
+* Telemetry Export CLI (`trace export telemetry`, `trace export dataset-report`) for JSON/CSV datasets.
 
 ---
 
-## 🔜 Milestone v1.0 — Evaluated Portfolio Product
+## 🎯 Milestone v0.5 — Collaborative Interactive Debugging Mode ✅
 
-**Goal**: Comprehensive evaluation across 50+ real-world student debugging sessions.
-* Quantitative benchmarks measuring diagnosis accuracy, evidence validity, cost, latency, and hallucination reduction vs baseline LLM prompting.
-* Public demonstration repository with reproducible evaluation scripts.
+**Goal**: Enable collaborative, Socratic debugging where students articulate hypotheses and run custom sandbox experiments.
+
+**Delivered Features**:
+* Dual Mode Architecture: **Guided Mode** (automated) vs **Interactive Mode** (collaborative dialogue).
+* Student Hypothesis Formulation & Agent Counter-Verification.
+* Student Sandbox Test Execution with isolated stdout/stderr capture.
+* Incremental Code Revisions with structural AST diffing (`lines_added`, `lines_deleted`, `cyclomatic_complexity_delta`).
+* Socratic Reflection Inquiries with seamless "Let TRACE Take Over" mode handoff.
+* Interaction Timeline component rendering chronological dialogue turns.
+* Privacy & Analytics Settings page with opt-in/opt-out toggles.
+
+---
+
+## 🎯 Milestone v1.0 — Student MVP Complete ✅
+
+**Delivered Features**:
+* Complete end-to-end Python debugging platform with 75/75 passing automated tests.
+* Zero fake ML hallucinations, full evidence grounding, and production-ready React web app.

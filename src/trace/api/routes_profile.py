@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trace.db.session import get_db_session
 from trace.ml.schemas import (
-    BehaviorPrediction,
     StudentProfile,
     TelemetryFeatures,
 )
@@ -40,7 +39,7 @@ async def get_session_telemetry(session_id: str, db: AsyncSession = Depends(get_
 
     return TelemetryFeatures(
         session_id=record.session_id,
-        is_synthetic=record.is_synthetic,
+        data_source=record.data_source,
         problem_id=record.problem_id,
         loc=record.loc,
         ast_node_count=record.ast_node_count,
@@ -56,7 +55,7 @@ async def get_session_telemetry(session_id: str, db: AsyncSession = Depends(get_
         failed_tool_ratio=record.failed_tool_ratio,
         tool_sequence_entropy=record.tool_sequence_entropy,
         total_investigation_steps=record.total_investigation_steps,
-        hypothesis_churn_count=record.hypothesis_churn_count,
+        hypothesis_count=record.hypothesis_count,
         hypothesis_rejection_ratio=record.hypothesis_rejection_ratio,
         countercheck_execution_rate=record.countercheck_execution_rate,
         direct_evidence_ratio=record.direct_evidence_ratio,

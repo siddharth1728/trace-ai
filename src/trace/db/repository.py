@@ -509,17 +509,26 @@ class SessionRepository:
         features_dict: Dict[str, Any],
         is_synthetic: bool = False,
         problem_id: str = "default",
+        data_source: str = "REAL",
     ) -> SessionTelemetryRecord:
         """Upsert a session's extracted 18-feature telemetry record."""
         stmt = select(SessionTelemetryRecord).where(SessionTelemetryRecord.session_id == session_id)
         res = await self.session.execute(stmt)
         record = res.scalar_one_or_none()
 
+        scalar_fields = [
+            "loc", "ast_node_count", "ast_max_depth", "cyclomatic_complexity", "function_count",
+            "has_traceback_input", "error_desc_length", "error_family_syntax", "error_family_type_or_value",
+            "ast_first_step", "static_to_exec_ratio", "failed_tool_ratio", "tool_sequence_entropy",
+            "total_investigation_steps", "hypothesis_count", "hypothesis_rejection_ratio",
+            "countercheck_execution_rate", "direct_evidence_ratio"
+        ]
+
         if record is None:
             record = SessionTelemetryRecord(
                 session_id=session_id,
-                is_synthetic=is_synthetic,
                 problem_id=problem_id,
+                data_source=data_source,
                 loc=features_dict.get("loc", 0),
                 ast_node_count=features_dict.get("ast_node_count", 0),
                 ast_max_depth=features_dict.get("ast_max_depth", 0),
@@ -533,25 +542,23 @@ class SessionRepository:
                 static_to_exec_ratio=features_dict.get("static_to_exec_ratio", 0.0),
                 failed_tool_ratio=features_dict.get("failed_tool_ratio", 0.0),
                 tool_sequence_entropy=features_dict.get("tool_sequence_entropy", 0.0),
-                user_actions_json=user_actions_json,
-                code_properties_json=code_properties_json,
-                investigation_context_json=investigation_context_json,
-                trace_agent_actions_json=trace_agent_actions_json,
-                outcome_json=outcome_json,
+                total_investigation_steps=features_dict.get("total_investigation_steps", 0),
+                hypothesis_count=features_dict.get("hypothesis_count", 0),
+                hypothesis_rejection_ratio=features_dict.get("hypothesis_rejection_ratio", 0.0),
+                countercheck_execution_rate=features_dict.get("countercheck_execution_rate", 0.0),
+                direct_evidence_ratio=features_dict.get("direct_evidence_ratio", 0.0),
+                user_actions_json="{}",
+                student_behavior_json="{}",
+                code_properties_json="{}",
+                investigation_context_json="{}",
+                trace_agent_actions_json="{}",
+                outcome_json="{}",
                 created_at=utc_now(),
             )
-            for k in scalar_fields:
-                if k in features_dict:
-                    setattr(record, k, features_dict[k])
             self.session.add(record)
         else:
             record.data_source = data_source
             record.problem_id = problem_id
-            record.user_actions_json = user_actions_json
-            record.code_properties_json = code_properties_json
-            record.investigation_context_json = investigation_context_json
-            record.trace_agent_actions_json = trace_agent_actions_json
-            record.outcome_json = outcome_json
             for k in scalar_fields:
                 if k in features_dict:
                     setattr(record, k, features_dict[k])
@@ -635,48 +642,4 @@ class SessionRepository:
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
 
-    async def save_prediction(
-        self,
-        prediction_id: str,
-        session_id: str,
-        predicted_archetype: str,
-        confidence: float,
-        top_factors: List[Dict[str, Any]],
-        pedagogical_explanation: str = "",
-        model_type: str = "RandomForest",
-        model_version: str = "v0.4",
-    ) -> BehaviorPredictionRecord:
-        """Save a behavior prediction for a session."""
-        stmt = select(BehaviorPredictionRecord).where(BehaviorPredictionRecord.session_id == session_id)
-        res = await self.session.execute(stmt)
-        record = res.scalar_one_or_none()
 
-        if record is None:
-            record = BehaviorPredictionRecord(
-                id=prediction_id,
-                session_id=session_id,
-                predicted_archetype=predicted_archetype,
-                confidence=confidence,
-                top_factors_json=json.dumps(top_factors or []),
-                pedagogical_explanation=pedagogical_explanation,
-                model_type=model_type,
-                model_version=model_version,
-                created_at=utc_now(),
-            )
-            self.session.add(record)
-        else:
-            record.predicted_archetype = predicted_archetype
-            record.confidence = confidence
-            record.top_factors_json = json.dumps(top_factors or [])
-            record.pedagogical_explanation = pedagogical_explanation
-            record.model_type = model_type
-            record.model_version = model_version
-
-        await self.session.commit()
-        return record
-
-    async def list_recent_predictions(self, limit: int = 50) -> List[BehaviorPredictionRecord]:
-        """List recent behavior predictions."""
-        stmt = select(BehaviorPredictionRecord).order_by(desc(BehaviorPredictionRecord.created_at)).limit(limit)
-        res = await self.session.execute(stmt)
-        return list(res.scalars().all())

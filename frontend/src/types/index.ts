@@ -259,24 +259,6 @@ export interface InvestigatePayload {
   max_iterations?: number;
 }
 
-export interface FeatureContribution {
-  feature_name: string;
-  feature_value: number;
-  contribution_weight: number;
-  description: string;
-}
-
-export interface BehaviorPrediction {
-  session_id: string;
-  predicted_archetype: 'SYSTEMATIC_VERIFICATION' | 'RAPID_TRIAL_AND_ERROR' | 'UNFOCUSED_EXPLORATION';
-  confidence: number;
-  top_contributing_factors: FeatureContribution[];
-  pedagogical_explanation: string;
-  model_type: string;
-  model_version: string;
-  created_at: string;
-}
-
 export interface DeterministicHabitStats {
   total_sessions: number;
   ast_first_rate: number;
@@ -289,8 +271,6 @@ export interface DeterministicHabitStats {
 
 export interface StudentProfile {
   deterministic_habits: DeterministicHabitStats;
-  latest_prediction?: BehaviorPrediction | null;
-  archetype_history: Record<string, number>;
   key_strengths: string[];
   growth_areas: string[];
   updated_at: string;

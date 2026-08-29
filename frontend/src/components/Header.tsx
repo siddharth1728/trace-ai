@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Info, X, Activity, History, Brain } from 'lucide-react';
+import { ShieldCheck, Info, X, Activity, History, Brain, Settings } from 'lucide-react';
 
 interface HeaderProps {
-  currentTab?: 'investigate' | 'history' | 'profile';
-  onTabChange?: (tab: 'investigate' | 'history' | 'profile') => void;
+  currentTab?: 'investigate' | 'history' | 'profile' | 'settings';
+  onTabChange?: (tab: 'investigate' | 'history' | 'profile' | 'settings') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
@@ -69,6 +69,17 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
               >
                 <Brain className="w-4 h-4" />
                 Profile
+              </button>
+              <button
+                onClick={() => onTabChange('settings')}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-md transition-colors ${
+                  currentTab === 'settings'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-surfaceBorder'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                Settings
               </button>
             </div>
           )}

@@ -13,6 +13,7 @@ from rich.text import Text
 import typer
 
 from trace.agent.orchestrator import InvestigationOrchestrator
+from trace.cli.export import export_app
 from trace.core.events import EventType, TraceEvent, global_event_bus
 from trace.core.models import HypothesisStatus
 from trace.core.state import AgentState, LifecycleState
@@ -26,6 +27,7 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
+app.add_typer(export_app, name="export")
 
 
 def format_status_badge(status: HypothesisStatus) -> Text:
