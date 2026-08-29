@@ -65,7 +65,7 @@ cd ..
 
 1. **Start Backend API Server (Port 8000)**:
    ```bash
-   python -m trace.api.main
+   python -m uvicorn trace.api.app:app --reload --port 8000
    ```
 
 2. **Start Frontend Dev Server (Port 5173)**:

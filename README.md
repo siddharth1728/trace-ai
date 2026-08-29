@@ -201,8 +201,8 @@ cd trace-ai
 # Install Python package in editable mode
 pip install -e .
 
-# Start FastAPI API server (Port 8000)
-python -m trace.api.main
+# Launch FastAPI backend on port 8000
+python -m uvicorn trace.api.app:app --reload --port 8000
 ```
 
 ### 3. Frontend Web Studio Setup
